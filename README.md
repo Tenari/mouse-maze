@@ -1,3 +1,23 @@
+# build the ui
+
+```bash
+cd ui && npm run build
+```
+
+# startup
+
+```bash
+cd server && zig build run
+```
+
+on the "projector" screen press "P" and "Enter" to put it in fullscreen
+
+## TODO
+
+- make the projector-view update on long-polling or websocket push
+
+## notes
+
 the absolute basics:
 
 - / => the view of the overall gameboard. this is the SPA where the overall gamestate is found
@@ -7,6 +27,19 @@ the absolute basics:
 2. let players move around it
 3. let them find the exit
 
+# temple-runner dungeon game
+
+goal: get the most treasure out of the dungeon.
+
+turns: players all can act at "same time" but you have limited moves. Then monsters all act.
+
+actions: move, search for traps, attack direction, examine treasure, pick up loot
+
+players have various stats: carrying capacity, hp/heart, move speed, lock picking, etc
+
+combat is a bad proposition, but you can team up and fight monsters.
+
+players are sort-of working together, but the longer they stay in the maze, the more monsters spawn. If you die, you get nothing
 
 # Merchants trading game
 
@@ -27,3 +60,17 @@ turns:
     - hire guard(s)
     - buy/sell carts
 - in a 
+
+# Pretty princess game
+
+goal: marry the "best" guy, each princess has different definition of "best"
+
+you have to discover information about the eligible bachelors by spending time/actions with them
+
+you can travel to various balls/noble houses to meet up with people
+
+guys have different stats, money, power, romanticness, kindness, which can be revealed by princesses spending actions on them
+
+each princess has a relationship valence mechanic with all the guys
+
+Balls provide opportunities to meet people, and to gossip about others (potentially hurt their relationships)

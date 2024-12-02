@@ -89,18 +89,26 @@
         }
         if (e.key === "P") {
           mode = 'map';
-          setInterval(() => {
-            fetch('/state').then((data)=> data.json()).then((data) => {
-              if (data) {
-                console.log(data);
-                grid = data.map;
-                users = data.users;
-                if (data.winner) {
-                  winner = data.winner;
-                }
+          var ws = new WebSocket(`ws://${window.location.host}/chat`);
+          ws.onmessage = function(e) {
+            var data = JSON.parse(e.data);
+            console.log('message', data);
+            if (data.map) {
+              grid = data.map;
+              users = data.users;
+              if (data.winner) {
+                winner = data.winner;
               }
-            });
-          }, 200);
+            }
+            return false;
+          };
+          ws.onclose = function(e) {
+            console.log('closed', e);
+          };
+
+          ws.onopen = function(e) {
+              console.log('open', e);
+          };
         }
       },
       false,
