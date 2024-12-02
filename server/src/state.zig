@@ -26,6 +26,7 @@ session_lock: std.Thread.Mutex = .{},
 token_name: []const u8 = "gc_token",
 map: [MAP_HEIGHT][MAP_LENGTH]Tile,
 winner: ?User.NameType = null,
+main_lock: std.Thread.Mutex = .{},
 
 // fns
 pub fn init(alloc: std.mem.Allocator) !Self {
@@ -248,26 +249,28 @@ pub fn writeJson(self: *Self, buf: []u8) []const u8 {
 }
 
 pub fn move(self: *Self, user: *User, direction: [1]u8) void {
-    var new_y = switch(direction[0]) {
-        //north
-        110 => user.y-1,
-        //south
-        115 => user.y+1,
-        else => user.y,
-    };
-    var new_x = switch(direction[0]) {
-        //east
-        101 => user.x+1,
-        //west
-        119 => user.x-1,
-        else => user.x,
-    };
-    if (new_y == MAP_HEIGHT) {
-        new_y = new_y - 1;
+    self.main_lock.lock();
+    defer self.main_lock.unlock();
+
+    var new_y = user.y;
+    var new_x = user.x;
+    //north
+    if (direction[0] == 110 and user.y > 0) {
+        new_y = user.y - 1;
     }
-    if (new_x == MAP_LENGTH) {
-        new_x = new_x - 1;
+    //south
+    if (direction[0] == 115 and user.y < MAP_HEIGHT - 1) {
+        new_y = user.y + 1;
     }
+    //east
+    if (direction[0] == 101 and user.x < MAP_LENGTH - 1) {
+        new_x = user.x + 1;
+    }
+    //west
+    if (direction[0] == 119 and user.x > 0) {
+        new_x = user.x - 1;
+    }
+
     // un-hide the tile
     self.map[new_y][new_x].hidden = false;
     switch (self.map[new_y][new_x].kind) {

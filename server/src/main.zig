@@ -2,12 +2,14 @@ const std = @import("std");
 const zap = @import("zap");
 const User = @import("user.zig");
 const State = @import("state.zig");
+const Ws = @import("ws.zig");
 
 const PORT = 3333;
 
 // GLOBALS
 var state: State = undefined;
 var routes: std.StringHashMap(Route) = undefined;
+var ws_manager: Ws.ChannelManager = undefined;
 
 // just a way to share our allocator via callback
 const SharedAllocator = struct {
@@ -27,68 +29,12 @@ const SharedAllocator = struct {
     }
 };
 
-// create a combined context struct
-const Context = struct {
-    session: ?SessionMiddleWare.Session = null,
+const Session = struct {
+    user: *User = undefined,
+    token: []const u8 = undefined,
 };
 
-// we create a Handler type based on our Context
-const Handler = zap.Middleware.Handler(Context);
-
-const SessionMiddleWare = struct {
-    handler: Handler,
-    token_name: []const u8 = "gc_token",
-    allocator: std.mem.Allocator,
-
-    const Self = @This();
-
-    // note: it MUST have all default values!!!
-    const Session = struct {
-        user: *User = undefined,
-        token: []const u8 = undefined,
-    };
-
-    pub fn init(alloc: std.mem.Allocator, other: ?*Handler) Self {
-        return .{
-            .handler = Handler.init(onRequest, other),
-            .allocator = alloc,
-        };
-    }
-
-    // we need the handler as a common interface to chain stuff
-    pub fn getHandler(self: *Self) *Handler {
-        return &self.handler;
-    }
-
-    // note that the first parameter is of type *Handler, not *Self !!!
-    pub fn onRequest(handler: *Handler, r: zap.Request, context: *Context) bool {
-        // this is how we would get our self pointer
-        const self: *Self = @fieldParentPtr("handler", handler);
-
-        // check for session cookie
-        r.parseCookies(false);
-        if (r.getCookieStr(self.allocator, self.token_name, false)) |maybe_cookie| {
-            if (maybe_cookie) |cookie| {
-                defer cookie.deinit();
-                if (state.userFromToken(cookie.str)) |user| {
-                    zap.debug("Auth: COOKIE IS OK!!!!\n", .{});
-                    context.session = Session {
-                        .token = cookie.str,
-                        .user = user,
-                    };
-                } else {
-                    zap.debug("Auth: COOKIE IS BAD!!!!: {s}\n", .{cookie.str});
-                }
-            }
-        } else |err| {
-            zap.debug("unreachable: could not check for cookie in UserPassSession: {any}", .{err});
-        }
-        // continue in the chain
-        return handler.handleOther(r, context);
-    }
-};
-
-const RequestFn = *const fn (r: zap.Request, context: *Context) bool;
+const RequestFn = *const fn (r: zap.Request, session: ?Session) void;
 const Route = struct {
     get: ?RequestFn = null,
     post: ?RequestFn = null,
@@ -97,9 +43,6 @@ const Route = struct {
 
 fn setup_routes(a: std.mem.Allocator) !void {
     routes = std.StringHashMap(Route).init(a);
-    try routes.put("/static", .{
-        .get = static_site,
-    });
     try routes.put("/user", .{
         .get = get_user,
         .post = create_or_login_user,
@@ -113,27 +56,19 @@ fn setup_routes(a: std.mem.Allocator) !void {
     });
 }
 
-fn static_site(r: zap.Request, _: *Context) bool {
-    r.sendBody("<html><body><h1>Hello from STATIC ZAP!</h1></body></html>") catch return false;
-    return true;
-}
-
-fn get_user(r: zap.Request, c: *Context) bool {
-    if (c.session) |*sess| {
+fn get_user(r: zap.Request, session: ?Session) void {
+    if (session) |*sess| {
         var buf: [1024]u8 = undefined;
         const message = sess.user.print(&buf);
-        r.sendJson(message) catch unreachable;
-        return true;
+        r.sendJson(message) catch return;
     } else {
-        r.sendJson("{\"error\":\"You must be logged in\"}") catch return false;
-        return true;
+        r.sendJson("{\"error\":\"You must be logged in\"}") catch return;
     }
 }
 
-fn create_or_login_user(r: zap.Request, c: *Context) bool {
-    if (c.session) |_| {
-        r.sendJson("{\"error\":\"already logged in\"}") catch return false;
-        return true;
+fn create_or_login_user(r: zap.Request, session: ?Session) void {
+    if (session != null) {
+        return r.sendJson("{\"error\":\"already logged in\"}") catch return;
     }
     r.parseBody() catch |err| {
         std.log.err("Parse Body error: {any}. Expected if body is empty", .{err});
@@ -146,12 +81,10 @@ fn create_or_login_user(r: zap.Request, c: *Context) bool {
             defer str.deinit();
             std.mem.copyForwards(u8, &name, str.str);
         } else {
-            r.sendJson("{\"error\":\"missing `name` parameter\"}") catch return false;
-            return true;
+            return r.sendJson("{\"error\":\"missing `name` parameter\"}") catch return;
         }
     } else |_| {
-        r.sendJson("{\"error\":\"missing `name` parameter\"}") catch return false;
-        return true;
+        return r.sendJson("{\"error\":\"missing `name` parameter\"}") catch return;
     }
 
     var pw = [_]u8 {0}**64;
@@ -160,20 +93,18 @@ fn create_or_login_user(r: zap.Request, c: *Context) bool {
             defer str.deinit();
             std.mem.copyForwards(u8, &pw, str.str);
         } else {
-            r.sendJson("{\"error\":\"missing `pw` parameter\"}") catch return false;
-            return true;
+            return r.sendJson("{\"error\":\"missing `pw` parameter\"}") catch return;
         }
     } else |_| {
-        r.sendJson("{\"error\":\"missing `pw` parameter\"}") catch return false;
-        return true;
+        return r.sendJson("{\"error\":\"missing `pw` parameter\"}") catch return;
     }
 
     if (state.users.getPtr(User.nameToId(name))) |user| {
         // log them in
         if (user.checkPw(&pw)) {
             const token = state.createSession(user.name) catch {
-                r.sendJson("{\"error\":\"could not login user?\"}") catch return false;
-                return true;
+                r.sendJson("{\"error\":\"could not login user?\"}") catch return;
+                return;
             };
             defer state.alloc.free(token);
             if (r.setCookie(.{
@@ -183,28 +114,23 @@ fn create_or_login_user(r: zap.Request, c: *Context) bool {
             })) {
                 var buf: [1024]u8 = undefined;
                 const message = user.print(&buf);
-                r.sendJson(message) catch unreachable;
-                return true;
+                return r.sendJson(message) catch return;
             } else |err| {
                 zap.debug("could not set session token: {any}", .{err});
-                r.sendJson("{\"error\":\"could not log int\"}") catch return false;
-                return true;
+                return r.sendJson("{\"error\":\"could not log in\"}") catch return;
             }
         } else {
-            r.sendJson("{\"error\":\"incorrect password\"}") catch return false;
-            return true;
+            return r.sendJson("{\"error\":\"incorrect password\"}") catch return;
         }
     } else {
         // create the user
         var user = User.init(&name, &pw);
         state.addUser(user) catch |e| {
             zap.debug("could not add user: {any}", .{e});
-            r.sendJson("{\"error\":\"could not add user?\"}") catch return false;
-            return true;
+            return r.sendJson("{\"error\":\"could not add user?\"}") catch return;
         };
         const token = state.createSession(user.name) catch {
-            r.sendJson("{\"error\":\"could not login user?\"}") catch return false;
-            return true;
+            return r.sendJson("{\"error\":\"could not login user?\"}") catch return;
         };
         defer state.alloc.free(token);
         if (r.setCookie(.{
@@ -214,17 +140,15 @@ fn create_or_login_user(r: zap.Request, c: *Context) bool {
         })) {
             var buf: [1024]u8 = undefined;
             const message = user.print(&buf);
-            r.sendJson(message) catch unreachable;
-            return true;
+            return r.sendJson(message) catch return;
         } else |err| {
             zap.debug("could not set session token: {any}", .{err});
-            r.sendJson("{\"error\":\"could not log in\"}") catch return false;
-            return true;
+            return r.sendJson("{\"error\":\"could not log in\"}") catch return;
         }
     }
 }
 
-fn get_map(r: zap.Request, _: *Context) bool {
+fn get_map(r: zap.Request, _: ?Session) void {
     var buf: [1024*8]u8 = undefined;
     var json_to_send: []const u8 = undefined;
     if (state.writeMapJson(&buf)) |json| {
@@ -233,18 +157,16 @@ fn get_map(r: zap.Request, _: *Context) bool {
         json_to_send = "null";
     }
     std.debug.print("<< json: {s}\n", .{json_to_send});
-    r.sendBody(json_to_send) catch return false;
-    return true;
+    r.sendBody(json_to_send) catch return;
 }
 
-fn get_state(r: zap.Request, _: *Context) bool {
+fn get_state(r: zap.Request, _: ?Session) void {
     var buf: [1024*32*4]u8 = undefined;
     const json_to_send: []const u8 = state.writeJson(&buf);
-    r.sendBody(json_to_send) catch return false;
-    return true;
+    r.sendBody(json_to_send) catch return;
 }
 
-fn submit_move(r: zap.Request, c: *Context) bool {
+fn submit_move(r: zap.Request, _: ?Session) void {
     r.parseBody() catch |err| {
         std.log.err("Parse Body error: {any}. Expected if body is empty", .{err});
     };
@@ -256,12 +178,10 @@ fn submit_move(r: zap.Request, c: *Context) bool {
             defer str.deinit();
             std.mem.copyForwards(u8, &direction, str.str);
         } else {
-            r.sendJson("{\"error\":\"missing `direction` parameter\"}") catch return false;
-            return true;
+            return r.sendJson("{\"error\":\"missing `direction` parameter\"}") catch return;
         }
     } else |_| {
-        r.sendJson("{\"error\":\"missing `direction` parameter\"}") catch return false;
-        return true;
+        return r.sendJson("{\"error\":\"missing `direction` parameter\"}") catch return;
     }
 
     var uid: u64 = 0;
@@ -269,88 +189,92 @@ fn submit_move(r: zap.Request, c: *Context) bool {
         if (val) |*str| {
             defer str.deinit();
             std.debug.print("got the uid param\n", .{});
-            uid = std.fmt.parseInt(u64, str.str, 10) catch return false;
+            uid = std.fmt.parseInt(u64, str.str, 10) catch return;
         } else {
-            r.sendJson("{\"error\":\"missing `uid` parameter\"}") catch return false;
-            return true;
+            return r.sendJson("{\"error\":\"missing `uid` parameter\"}") catch return;
         }
     } else |_| {
-        r.sendJson("{\"error\":\"missing `uid` parameter\"}") catch return false;
-        return true;
+        return r.sendJson("{\"error\":\"missing `uid` parameter\"}") catch return;
     }
     std.log.err("we parsed the uid {d}", .{uid});
     if (state.users.getPtr(uid)) |user| {
         state.move(user, direction);
+        var buf: [1024*32*4]u8 = undefined;
+        const json_to_send: []const u8 = state.writeJson(&buf);
+        Ws.Handler.publish(.{ .channel = "state", .message = json_to_send });
+        r.sendBody(json_to_send) catch return;
     }
-    return get_state(r, c);
 }
 
-// handles the request and sends a response
-const ApiMiddleWare = struct {
-    handler: Handler,
+fn onRequest(r: zap.Request) void {
+    const alloc = SharedAllocator.getAllocator();
 
-    const Self = @This();
-
-    pub fn init(other: ?*Handler) !Self {
-        return .{
-            .handler = Handler.init(onRequest, other),
-        };
-    }
-
-    // we need the handler as a common interface to chain stuff
-    pub fn getHandler(self: *Self) *Handler {
-        return &self.handler;
-    }
-
-    // note that the first parameter is of type *Handler, not *Self !!!
-    pub fn onRequest(handler: *Handler, r: zap.Request, context: *Context) bool {
-        // dumbass routing
-        if (r.path) |p| {
-            if (routes.get(p)) |route| {
-                switch (r.methodAsEnum()) {
-                    .GET => if (route.get) |func| {
-                        return func(r, context);
-                    },
-                    .POST => if (route.post) |func| {
-                        return func(r, context);
-                    },
-                    .PUT => if (route.put) |func| {
-                        return func(r, context);
-                    },
-                    else => {}
-                }
+    // parse session cookie
+    var session: ?Session = null;
+    r.parseCookies(false);
+    if (r.getCookieStr(alloc, state.token_name, false)) |maybe_cookie| {
+        if (maybe_cookie) |cookie| {
+            defer cookie.deinit();
+            if (state.userFromToken(cookie.str)) |user| {
+                zap.debug("Auth: COOKIE IS OK!!!!\n", .{});
+                session = Session {
+                    .token = cookie.str,
+                    .user = user,
+                };
+            } else {
+                zap.debug("Auth: COOKIE IS BAD!!!!: {s}\n", .{cookie.str});
             }
         }
-        // TODO real 404 response here
-
-        // this is how we would get our self pointer
-        const self: *Self = @fieldParentPtr("handler", handler);
-        _ = self;
-
-        var buf: [1024]u8 = undefined;
-        var sessionFound: bool = false;
-        if (context.session) |session| {
-            sessionFound = true;
-
-            std.debug.assert(r.isFinished() == false);
-            const message = std.fmt.bufPrint(&buf, "User: {s} / {any} Session token: {s}", .{
-                session.user.name,
-                session.user.pw_hash,
-                session.token,
-            }) catch unreachable;
-            r.setContentType(.TEXT) catch unreachable;
-            r.sendBody(message) catch unreachable;
-            std.debug.assert(r.isFinished() == true);
-            return true;
-        }
-
-        const message = std.fmt.bufPrint(&buf, "session info found: {}", .{ sessionFound }) catch unreachable;
-
-        r.setContentType(.TEXT) catch unreachable;
-        r.sendBody(message) catch unreachable;
-        return true;
+    } else |err| {
+        zap.debug("unreachable: could not check for cookie in UserPassSession: {any}", .{err});
     }
-};
+
+    // dumbass routing
+    if (r.path) |p| {
+        if (routes.get(p)) |route| {
+            switch (r.methodAsEnum()) {
+                .GET => if (route.get) |func| {
+                    return func(r, session);
+                },
+                .POST => if (route.post) |func| {
+                    return func(r, session);
+                },
+                .PUT => if (route.put) |func| {
+                    return func(r, session);
+                },
+                else => {}
+            }
+        }
+    }
+
+    // fallback 404 response here
+    r.setStatus(.not_found);
+    r.sendBody(
+        \\ <html><body>
+        \\ <h1>Error 404 - Not Found</h1>
+        \\ </body></html>
+    ) catch return;
+}
+
+fn on_upgrade(r: zap.Request, target_protocol: []const u8) void {
+    // make sure we're talking the right protocol
+    if (!std.mem.eql(u8, target_protocol, "websocket")) {
+        std.log.warn("received illegal protocol: {s}", .{target_protocol});
+        r.setStatus(.bad_request);
+        r.sendBody("400 - BAD REQUEST") catch unreachable;
+        return;
+    }
+    var channel = ws_manager.newChannel() catch |err| {
+        std.log.err("Error creating context: {any}", .{err});
+        return;
+    };
+
+    Ws.Handler.upgrade(r.h, &channel.settings) catch |err| {
+        std.log.err("Error in websocketUpgrade(): {any}", .{err});
+        return;
+    };
+    std.log.info("connection upgrade OK", .{});
+}
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{
@@ -369,21 +293,19 @@ pub fn main() !void {
         state = try State.init(allocator);
         defer state.deinit();
 
-        // we create our main middleware component that handles the request
-        var apiHandler = try ApiMiddleWare.init(null);
+        ws_manager = Ws.ChannelManager.init(allocator, "state", "user-", &state);
+        defer ws_manager.deinit();
 
-        var sessionHandler = SessionMiddleWare.init(allocator, apiHandler.getHandler());
-
-        var listener = try zap.Middleware.Listener(Context).init(
+        var listener = zap.HttpListener.init(
             .{
                 .port = PORT,
-                .on_request = null,
+                .on_request = onRequest,
+                .on_upgrade = on_upgrade,
                 .log = true,
-                .max_clients = 100000,
+                .max_clients = 10_000,
+                .max_body_size = 1 * 1024,
                 .public_folder = "src/ui",
             },
-            sessionHandler.getHandler(),
-            SharedAllocator.getAllocator,
         );
         try listener.listen();
 
@@ -393,7 +315,7 @@ pub fn main() !void {
 
         // start worker threads
         zap.start(.{
-            .threads = 2,
+            .threads = 1,
             .workers = 1,
         });
     }
