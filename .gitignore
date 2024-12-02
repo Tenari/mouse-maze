@@ -1,0 +1,3 @@
+server/zig-out
+server/.zig-cache
+server/src/ui
