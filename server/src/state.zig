@@ -16,6 +16,12 @@ const Printable = struct {
     users: []User.Printable,
     winner: ?[]const u8,
 };
+const Direction = enum(u8) {
+    north = 110,
+    south = 115,
+    east = 101,
+    west = 119,
+};
 
 // fields
 alloc: std.mem.Allocator = undefined,
@@ -252,41 +258,63 @@ pub fn move(self: *Self, user: *User, direction: [1]u8) void {
     self.main_lock.lock();
     defer self.main_lock.unlock();
 
-    var new_y = user.y;
-    var new_x = user.x;
-    //north
-    if (direction[0] == 110 and user.y > 0) {
-        new_y = user.y - 1;
-    }
-    //south
-    if (direction[0] == 115 and user.y < MAP_HEIGHT - 1) {
-        new_y = user.y + 1;
-    }
-    //east
-    if (direction[0] == 101 and user.x < MAP_LENGTH - 1) {
-        new_x = user.x + 1;
-    }
-    //west
-    if (direction[0] == 119 and user.x > 0) {
-        new_x = user.x - 1;
-    }
-
-    // un-hide the tile
-    self.map[new_y][new_x].hidden = false;
-    switch (self.map[new_y][new_x].kind) {
-        .grass => {
-            // update the user
-            user.x = new_x;
-            user.y = new_y;
-            // un-hide the tile
-            self.map[new_y][new_x].hidden = false;
-        },
-        .exit => {
-            // win the game
-            self.winner = user.name;
-        },
-        .stone => {
-            // don't need to do anything else... they cant move
-        },
+    const new_tile = self.getTileChecked(user.x, user.y, @enumFromInt(direction[0]));
+    if (new_tile) |tile| {
+        // un-hide the tiles you can see
+        self.unhideVisibleHalls(tile.x, tile.y);
+        switch (tile.kind) {
+            .grass => {
+                // update the user
+                user.x = tile.x;
+                user.y = tile.y;
+                // un-hide the tile
+                tile.hidden = false;
+            },
+            .exit => {
+                // win the game
+                self.winner = user.name;
+            },
+            .stone => {
+                // don't need to do anything else... they cant move
+            },
+        }
     }
 }
+
+fn getTileChecked(self: *Self, x: u64, y: u64, direction: Direction) ?*Tile {
+    if (direction == .north and y > 0) {
+        return &self.map[y-1][x];
+    }
+    if (direction == .south and y < MAP_HEIGHT - 1) {
+        return &self.map[y+1][x];
+    }
+    if (direction == .west and x > 0) {
+        return &self.map[y][x-1];
+    }
+    if (direction == .east and x < MAP_LENGTH - 1) {
+        return &self.map[y][x+1];
+    }
+    return null;
+}
+
+// in a 5 tile-radius, mark everything not blocked by a wall as hidden=false
+fn unhideVisibleHalls(self: *Self, x: u64, y: u64) void {
+    self.unhideDirection(x, y, .north);
+    self.unhideDirection(x, y, .south);
+    self.unhideDirection(x, y, .east);
+    self.unhideDirection(x, y, .west);
+}
+
+fn unhideDirection(self: *Self, x: u64, y: u64, direction: Direction) void {
+    var current_tile = &self.map[y][x];
+    var iterations: usize = 0;
+    while (current_tile.kind != .stone and iterations < 5) {
+        const maybe_tile = self.getTileChecked(current_tile.x, current_tile.y, direction);
+        if (maybe_tile) |tile| {
+            current_tile = tile;
+        }
+        current_tile.hidden = false;
+        iterations += 1;
+    }
+}
+
