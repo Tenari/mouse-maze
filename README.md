@@ -15,7 +15,7 @@ on the "projector" screen press "P" and "Enter" to put it in fullscreen
 ## TO DO
 
 - [x] make the projector-view update on long-polling or websocket push
-- [ ] make the rats able to see down the hallways
+- [x] make the rats able to see down the hallways
 - [ ] color the rats uniquely
 - [ ] limit your moves per "turn"
 - [ ] add cheeses to collect, change win condition to "first to exit the map with 3 cheese"
