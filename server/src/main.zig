@@ -41,22 +41,22 @@ const Route = struct {
     put: ?RequestFn = null,
 };
 
-fn setup_routes(a: std.mem.Allocator) !void {
+fn setupRoutes(a: std.mem.Allocator) !void {
     routes = std.StringHashMap(Route).init(a);
     try routes.put("/user", .{
-        .get = get_user,
-        .post = create_or_login_user,
+        .get = getUser,
+        .post = createOrLoginUser,
     });
     try routes.put("/state", .{
-        .get = get_state,
-        .post = submit_move,
+        .get = getState,
+        .post = submitMove,
     });
     try routes.put("/map", .{
-        .get = get_map,
+        .get = getMap,
     });
 }
 
-fn get_user(r: zap.Request, session: ?Session) void {
+fn getUser(r: zap.Request, session: ?Session) void {
     if (session) |*sess| {
         var buf: [1024]u8 = undefined;
         const message = sess.user.print(&buf);
@@ -66,7 +66,7 @@ fn get_user(r: zap.Request, session: ?Session) void {
     }
 }
 
-fn create_or_login_user(r: zap.Request, session: ?Session) void {
+fn createOrLoginUser(r: zap.Request, session: ?Session) void {
     if (session != null) {
         return r.sendJson("{\"error\":\"already logged in\"}") catch return;
     }
@@ -137,6 +137,7 @@ fn create_or_login_user(r: zap.Request, session: ?Session) void {
             .name = state.token_name,
             .value = token,
             .max_age_s = 0,
+            .secure = false,
         })) {
             var buf: [1024]u8 = undefined;
             const message = user.print(&buf);
@@ -148,7 +149,7 @@ fn create_or_login_user(r: zap.Request, session: ?Session) void {
     }
 }
 
-fn get_map(r: zap.Request, _: ?Session) void {
+fn getMap(r: zap.Request, _: ?Session) void {
     var buf: [1024*8]u8 = undefined;
     var json_to_send: []const u8 = undefined;
     if (state.writeMapJson(&buf)) |json| {
@@ -160,49 +161,38 @@ fn get_map(r: zap.Request, _: ?Session) void {
     r.sendBody(json_to_send) catch return;
 }
 
-fn get_state(r: zap.Request, _: ?Session) void {
+fn getState(r: zap.Request, _: ?Session) void {
     var buf: [1024*32*4]u8 = undefined;
     const json_to_send: []const u8 = state.writeJson(&buf);
     r.sendBody(json_to_send) catch return;
 }
 
-fn submit_move(r: zap.Request, _: ?Session) void {
-    r.parseBody() catch |err| {
-        std.log.err("Parse Body error: {any}. Expected if body is empty", .{err});
-    };
-    r.parseQuery();
+fn submitMove(r: zap.Request, session: ?Session) void {
+    if (session) |sess| {
+        r.parseBody() catch |err| {
+            std.log.err("Parse Body error: {any}. Expected if body is empty", .{err});
+        };
+        r.parseQuery();
 
-    var direction: [1]u8 = [1]u8{0};
-    if (r.getParamStr(SharedAllocator.getAllocator(), "direction", false)) |val| {
-        if (val) |*str| {
-            defer str.deinit();
-            std.mem.copyForwards(u8, &direction, str.str);
-        } else {
+        var direction: [1]u8 = [1]u8{0};
+        if (r.getParamStr(SharedAllocator.getAllocator(), "direction", false)) |val| {
+            if (val) |*str| {
+                defer str.deinit();
+                std.mem.copyForwards(u8, &direction, str.str);
+            } else {
+                return r.sendJson("{\"error\":\"missing `direction` parameter\"}") catch return;
+            }
+        } else |_| {
             return r.sendJson("{\"error\":\"missing `direction` parameter\"}") catch return;
         }
-    } else |_| {
-        return r.sendJson("{\"error\":\"missing `direction` parameter\"}") catch return;
-    }
 
-    var uid: u64 = 0;
-    if (r.getParamStr(SharedAllocator.getAllocator(), "uid", false)) |val| {
-        if (val) |*str| {
-            defer str.deinit();
-            std.debug.print("got the uid param\n", .{});
-            uid = std.fmt.parseInt(u64, str.str, 10) catch return;
-        } else {
-            return r.sendJson("{\"error\":\"missing `uid` parameter\"}") catch return;
-        }
-    } else |_| {
-        return r.sendJson("{\"error\":\"missing `uid` parameter\"}") catch return;
-    }
-    std.log.err("we parsed the uid {d}", .{uid});
-    if (state.users.getPtr(uid)) |user| {
-        state.move(user, direction);
+        state.move(sess.user, direction);
         var buf: [1024*32*4]u8 = undefined;
         const json_to_send: []const u8 = state.writeJson(&buf);
         Ws.Handler.publish(.{ .channel = "state", .message = json_to_send });
         r.sendBody(json_to_send) catch return;
+    } else {
+        return r.sendJson("{\"error\":\"you're not logged in\"}") catch return;
     }
 }
 
@@ -216,7 +206,6 @@ fn onRequest(r: zap.Request) void {
         if (maybe_cookie) |cookie| {
             defer cookie.deinit();
             if (state.userFromToken(cookie.str)) |user| {
-                zap.debug("Auth: COOKIE IS OK!!!!\n", .{});
                 session = Session {
                     .token = cookie.str,
                     .user = user,
@@ -287,7 +276,7 @@ pub fn main() !void {
         const allocator = gpa.allocator();
         SharedAllocator.init(allocator);
 
-        try setup_routes(allocator);
+        try setupRoutes(allocator);
         defer routes.deinit();
 
         state = try State.init(allocator);
