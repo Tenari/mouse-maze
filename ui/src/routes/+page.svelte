@@ -72,6 +72,7 @@
 <script>
   let mode = $state('user');
   let error = $state(false);
+  let moveError = $state(false);
   let user = $state(null);
   let loginName = $state("");
   let loginPass = $state("");
@@ -107,6 +108,14 @@
       }
     ).then((data) => data.json()).then((data) => {
         //user = data;
+      if (data.error) {
+        moveError = data.error;
+      } else {
+        moveError = false;
+        if (data.users) {
+          user = data.users.find(u => u.id == user.id);
+        }
+      }
     })
   };
 
@@ -128,6 +137,16 @@
         if (e.key === "Enter") {
           toggleFullScreen();
         }
+        if (e.key === "?") {
+          fetch(
+            '/map',
+            {
+              headers: {'Content-Type':'application/json'},
+              method: 'POST',
+              credentials: 'include',
+            }
+          );
+        }
         if (e.key === "P") {
           mode = 'map';
           var ws = new WebSocket(`ws://${window.location.host}/chat`);
@@ -139,6 +158,8 @@
               users = data.users;
               if (data.winner) {
                 winner = data.winner;
+              } else {
+                winner = null;
               }
             }
             return false;
@@ -150,6 +171,18 @@
           ws.onopen = function(e) {
               console.log('open', e);
           };
+        }
+        if (e.key === "w" && user) {
+          move('n');
+        }
+        if (e.key === "s" && user) {
+          move('s');
+        }
+        if (e.key === "d" && user) {
+          move('e');
+        }
+        if (e.key === "a" && user) {
+          move('w');
         }
       },
       false,
@@ -173,11 +206,17 @@
       <div class="row">
       {#each row as tile}
         <div class="tile {tile.hidden ? '' : tile.kind}">
-          {#each users as user}
-            {#if user.x == tile.x && user.y == tile.y}
-              <img src="https://pngimg.com/uploads/rat_mouse/rat_mouse_PNG2465.png" width="37" height="37" style="border-bottom: 3px solid #{padHex(user.id.toString(16))}"/>
+          {#if !tile.hidden}
+            {#if tile.cheese}
+              <img src="https://www.pngall.com/wp-content/uploads/2016/03/Cheese-Free-Download-PNG.png" width="32" height="32"/>
+            {:else}
+              {#each users as user}
+                {#if user.x == tile.x && user.y == tile.y}
+                  <img src="https://pngimg.com/uploads/rat_mouse/rat_mouse_PNG2465.png" width="37" height="37" style="border-bottom: 3px solid #{padHex(user.id.toString(16))}"/>
+                {/if}
+              {/each}
             {/if}
-          {/each}
+          {/if}
         </div>
       {/each}
       </div>
@@ -196,6 +235,10 @@
       </div>
     {:else}
       <p style="border-bottom: 5px solid #{padHex(user.id.toString(16))}">Playing as <b>{user.name}</b></p>
+      <p>
+        <img src="https://www.pngall.com/wp-content/uploads/2016/03/Cheese-Free-Download-PNG.png" width="64" height="64"/>
+        <b>{user.cheeses}</b>
+      </p>
       <div class="moves">
         <div>
           <button class="" onclick={() => move('n')}>↑</button>
@@ -208,6 +251,9 @@
           <button class="" onclick={() => move('s')}>↓</button>
         </div>
       </div>
+      {#if moveError}
+        <p style="color: red">{moveError}</p>
+      {/if}
     {/if}
   {/if}
 {/if}

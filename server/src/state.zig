@@ -10,6 +10,7 @@ const Hash = std.crypto.hash.sha2.Sha256;
 const Token = [Hash.digest_length * 2]u8;
 const MAP_LENGTH = 31;//46; on my projector, max size
 const MAP_HEIGHT = 21;//26; on my projector
+const CHEESE_TO_WIN = 2;
 
 const Printable = struct {
     map: [MAP_HEIGHT][MAP_LENGTH]Tile,
@@ -156,7 +157,41 @@ fn generateMaze(comptime len: usize, comptime height: usize, alloc: std.mem.Allo
     }
     map[0][1].kind = .exit;
     map[height - 1][len - 2].kind = .grass;
+    map[height - 1][len - 2].hidden = false;
     return map;
+}
+
+fn addRandomCheese(self: *Self, count: u8) void {
+    var prng = std.rand.DefaultPrng.init(@intCast(std.time.timestamp()));
+    const random = prng.random();
+    var added: u8 = 0;
+    while (added < count) {
+        const tile = randomTile(MAP_LENGTH, MAP_HEIGHT, random, &self.map);
+        if (tile.cheese == false and tile.kind == .grass) {
+            tile.cheese = true;
+            added += 1;
+        }
+    }
+}
+
+pub fn reset(self: *Self) void {
+    self.main_lock.lock();
+    defer self.main_lock.unlock();
+    self.winner = null;
+    self.map = generateMaze(MAP_LENGTH, MAP_HEIGHT, self.alloc) catch self.map;
+    {
+        self.user_lock.lock();
+        defer self.user_lock.unlock();
+        var it = self.users.keyIterator();
+        while (it.next()) |key| {
+            if (self.users.getPtr(key.*)) |user| {
+                user.cheeses = 0;
+                user.x = User.DEFAULT_X;
+                user.y = User.DEFAULT_Y;
+            }
+            self.addRandomCheese(3);
+        }
+    }
 }
 
 pub fn deinit(self: *Self) void {
@@ -176,6 +211,7 @@ pub fn addUser(self: *Self, user: User) !void {
         defer self.user_lock.unlock();
         try self.users.put(user.id, user);
     }
+    self.addRandomCheese(3);
 }
 
 pub fn userFromToken(self: *Self, token: []const u8) ?*User {
@@ -254,7 +290,7 @@ pub fn writeJson(self: *Self, buf: []u8) []const u8 {
     }
 }
 
-pub fn move(self: *Self, user: *User, direction: [1]u8) void {
+pub fn move(self: *Self, user: *User, direction: [1]u8) !void {
     self.main_lock.lock();
     defer self.main_lock.unlock();
 
@@ -269,10 +305,18 @@ pub fn move(self: *Self, user: *User, direction: [1]u8) void {
                 user.y = tile.y;
                 // un-hide the tile
                 tile.hidden = false;
+                if (tile.cheese) {
+                    tile.cheese = false;
+                    user.cheeses += 1;
+                }
             },
             .exit => {
-                // win the game
-                self.winner = user.name;
+                if (user.cheeses >= CHEESE_TO_WIN) {
+                    // win the game
+                    self.winner = user.name;
+                } else {
+                    return error.NotEnoughCheese;
+                }
             },
             .stone => {
                 // don't need to do anything else... they cant move

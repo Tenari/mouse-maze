@@ -12,6 +12,7 @@ x: usize,
 y: usize,
 kind: TileKind = .stone,
 hidden: bool = true,
+cheese: bool = false,
 
 // fns
 pub fn init(x: usize, y: usize) Self {

@@ -53,6 +53,7 @@ fn setupRoutes(a: std.mem.Allocator) !void {
     });
     try routes.put("/map", .{
         .get = getMap,
+        .post = resetGame,
     });
 }
 
@@ -139,8 +140,11 @@ fn createOrLoginUser(r: zap.Request, session: ?Session) void {
             .max_age_s = 0,
             .secure = false,
         })) {
-            var buf: [1024]u8 = undefined;
-            const message = user.print(&buf);
+            var buf: [1024*32*4]u8 = undefined;
+            const json_to_send: []const u8 = state.writeJson(&buf);
+            Ws.Handler.publish(.{ .channel = "state", .message = json_to_send });
+            var buf2: [1024]u8 = undefined;
+            const message = user.print(&buf2);
             return r.sendJson(message) catch return;
         } else |err| {
             zap.debug("could not set session token: {any}", .{err});
@@ -186,16 +190,29 @@ fn submitMove(r: zap.Request, session: ?Session) void {
             return r.sendJson("{\"error\":\"missing `direction` parameter\"}") catch return;
         }
 
-        state.move(sess.user, direction);
-        var buf: [1024*32*4]u8 = undefined;
-        const json_to_send: []const u8 = state.writeJson(&buf);
-        Ws.Handler.publish(.{ .channel = "state", .message = json_to_send });
-        r.sendBody(json_to_send) catch return;
+        if (state.move(sess.user, direction)) {
+            var buf: [1024*32*4]u8 = undefined;
+            const json_to_send: []const u8 = state.writeJson(&buf);
+            Ws.Handler.publish(.{ .channel = "state", .message = json_to_send });
+            r.sendBody(json_to_send) catch return;
+        } else |e| switch (e) {
+            error.NotEnoughCheese => return r.sendJson("{\"error\":\"not enough cheeses collected\"}") catch return,
+        }
     } else {
         return r.sendJson("{\"error\":\"you're not logged in\"}") catch return;
     }
 }
 
+fn resetGame(r: zap.Request, session: ?Session) void {
+    if (session == null) {
+        return r.sendJson("{\"error\":\"you're not logged in\"}") catch return;
+    }
+    state.reset();
+    var buf: [1024*32*4]u8 = undefined;
+    const json_to_send: []const u8 = state.writeJson(&buf);
+    Ws.Handler.publish(.{ .channel = "state", .message = json_to_send });
+    return r.sendJson("{\"status\":\"reset\"}") catch return;
+}
 fn onRequest(r: zap.Request) void {
     const alloc = SharedAllocator.getAllocator();
 

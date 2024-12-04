@@ -4,11 +4,14 @@ const zap = @import("zap");
 pub const NameType = [64:0]u8;
 const Self = @This();
 
+pub const DEFAULT_X: usize = 29;
+pub const DEFAULT_Y: usize = 20;
 pub const Printable = struct {
     id: u64,
     name: []const u8,
     x: usize,
     y: usize,
+    cheeses: usize,
 };
 
 // fields
@@ -17,8 +20,9 @@ name: NameType,
 name_len: u8,
 pw_hash: [64]u8,
 salt: [16]u8,
-x: usize = 29,
-y: usize = 20,
+x: usize = DEFAULT_X,
+y: usize = DEFAULT_Y,
+cheeses: usize = 0,
 
 // fns
 pub fn init(n: []const u8, pw: []const u8) Self {
@@ -62,6 +66,7 @@ pub fn toPrintable(self: *Self) Printable {
         .name = self.name[0..self.name_len],
         .x = self.x,
         .y = self.y,
+        .cheeses = self.cheeses,
     };
 }
 
