@@ -21,7 +21,16 @@ on the "projector" screen press "P" and "Enter" to put it in fullscreen
 - [x] color the rats uniquely
 - [x] add cheeses to collect, change win condition to "first to exit the map with N cheeses"
 - [x] reset-able games
-- [ ] limit your moves per "turn"
+
+## transform it into the temple-run
+
+- [ ] auto-reset and keep score across 3 rounds
+- [ ] traps
+- [ ] monsters
+- [ ] limit your move speed
+    - either mad-dash/speed-clicking
+    - or turn-based n-moves per turn
+    - or tick-based
 
 ## notes
 

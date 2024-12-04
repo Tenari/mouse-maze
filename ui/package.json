@@ -4,7 +4,7 @@
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
-		"build": "vite build && cp -r build/* ../server/src/ui/",
+		"build": "vite build && rm -rf ../server/src/ui/_app && cp -r build/* ../server/src/ui/",
 		"preview": "vite preview"
 	},
 	"devDependencies": {

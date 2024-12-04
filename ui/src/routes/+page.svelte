@@ -149,7 +149,8 @@
         }
         if (e.key === "P") {
           mode = 'map';
-          var ws = new WebSocket(`ws://${window.location.host}/chat`);
+          const wsstr = window.location.host.includes("zapata") ? "wss" : "ws";
+          var ws = new WebSocket(`${wsstr}://${window.location.host}/chat`);
           ws.onmessage = function(e) {
             var data = JSON.parse(e.data);
             console.log('message', data);
