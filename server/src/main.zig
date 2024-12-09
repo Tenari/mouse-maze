@@ -213,6 +213,7 @@ fn resetGame(r: zap.Request, session: ?Session) void {
     Ws.Handler.publish(.{ .channel = "state", .message = json_to_send });
     return r.sendJson("{\"status\":\"reset\"}") catch return;
 }
+
 fn onRequest(r: zap.Request) void {
     const alloc = SharedAllocator.getAllocator();
 

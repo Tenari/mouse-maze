@@ -6,97 +6,29 @@
     font-size: 30px;
     text-align: center;
   }
-  .grid {
-    width: 1760px;
-    margin-left: auto;
-    margin-right: auto;
-  }
-  .row {
-    display: flex;
-  }
-  .tile {
-    height: 40px;
-    width: 40px;
-    background-color: black;
-    overflow: hidden;
-  }
-  .tile.grass {
-    background-color: green;
-  }
-  .tile.stone {
-    background-color: gray;
-  }
-  .tile.exit {
-    background-color: red;
-  }
-  .moves div {
+  .moves div, .open-chest {
     display: flex;
     margin-top: 20px;
     margin-bottom: 20px;
     justify-content: center;
   }
-  .moves div button{
+  .moves div button, .open-chest button{
     font-size: 50px;
     width: 49%;
-  }
-  .login {
-    font-size: 30px;
-    padding-right: 15px;
-    padding-left: 15px;
-  }
-  .login h2 {
-    font-size: 40px;
-    margin-top: 5px;
-    margin-bottom: 45px;
-    text-align: center;
-  }
-  .login input {
-    width: 100%;
-    margin-left: 20px;
-    font-size: 25px;
-  }
-  .login>div {
-    display: flex;
-    margin-bottom: 20px;
-  }
-  .login button {
-    display: block;
-    margin-top: 45px;
-    margin-left: auto;
-    margin-right: auto;
-    width: 50%;
-    font-size: 40px;
   }
 </style>
 
 <script>
+  import Results from './Results.svelte';
+  import Map from './Map.svelte';
+  import Login from './Login.svelte';
+  import { user, users, userId } from './user.svelte.js';
+  import { padHex } from '$lib/index.js';
+  let round = $state(1);
+  let grid = $state([]);
   let mode = $state('user');
-  let error = $state(false);
   let moveError = $state(false);
-  let user = $state(null);
-  let loginName = $state("");
-  let loginPass = $state("");
-  fetch('/user').then((data)=> data.json()).then((data) => {
-    if (data.name) {
-      user = data;
-    }
-  });
-  const loginOrSignUp = () => {
-    if (loginPass.length === 0) {
-      error = "At least 1 character password please";
-      return;
-    }
-    fetch(
-      '/user',
-      {
-        headers: {'Content-Type':'application/json'},
-        method: 'POST',
-        body: JSON.stringify({name: loginName, pw: loginPass})
-      }
-    ).then((data) => data.json()).then((data) => {
-        user = data;
-    })
-  };
+
   const move = (direction) => {
     fetch(
       '/state',
@@ -107,21 +39,20 @@
         credentials: 'include',
       }
     ).then((data) => data.json()).then((data) => {
-        //user = data;
       if (data.error) {
         moveError = data.error;
       } else {
         moveError = false;
         if (data.users) {
-          user = data.users.find(u => u.id == user.id);
+          users = data.users;
+        }
+        if (data.map) {
+          grid = data.map
         }
       }
     })
   };
 
-  let winner = $state(null);
-  let grid = $state([]);
-  let users = $state([]);
   function toggleFullScreen() {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen();
@@ -131,6 +62,15 @@
   }
 
   $effect(() => {
+    fetch('/user').then((data)=> data.json()).then((data) => {
+      if (data.name) {
+        if (!users.find(u => u.id === data.id)) {
+          users.push(data);
+        }
+        userId = data.id;
+      }
+    });
+
     document.addEventListener(
       "keydown",
       (e) => {
@@ -157,10 +97,8 @@
             if (data.map) {
               grid = data.map;
               users = data.users;
-              if (data.winner) {
-                winner = data.winner;
-              } else {
-                winner = null;
+              if (data.round) {
+                round = data.round;
               }
             }
             return false;
@@ -189,69 +127,57 @@
       false,
     );
   });
-  const padHex = (str) => {
-    if (str.length < 6) {
-      return padHex('0'+str);
-    } else {
-      return str.substr(0,6);
+  const adjacentSpots = (x,y) => {
+    console.log(grid);
+    let results = [];
+    if (grid && grid.length > 0) {
+      results.push(grid[y-1] && grid[y-1][x]);
+      results.push(grid[y+1] && grid[y+1][x]);
+      results.push(grid[y][x-1]);
+      results.push(grid[y][x+1]);
     }
+    return results.filter(r => !!r);
   };
+  let nearChest = $derived(user && !!adjacentSpots(user.x, user.y).find(t => t.chest));
 </script>
 
-{#if winner}
-  <h1>{winner} Wins!</h1>
+{#if round === 4}
+  <Results />
 {:else}
   {#if mode == 'map'}
-    <div class="grid">
-    {#each grid as row}
-      <div class="row">
-      {#each row as tile}
-        <div class="tile {tile.hidden ? '' : tile.kind}">
-          {#if !tile.hidden}
-            {#if tile.cheese}
-              <img src="https://www.pngall.com/wp-content/uploads/2016/03/Cheese-Free-Download-PNG.png" width="32" height="32"/>
-            {:else}
-              {#each users as user}
-                {#if user.x == tile.x && user.y == tile.y}
-                  <img src="https://pngimg.com/uploads/rat_mouse/rat_mouse_PNG2465.png" width="37" height="37" style="border-bottom: 3px solid #{padHex(user.id.toString(16))}"/>
-                {/if}
-              {/each}
-            {/if}
-          {/if}
-        </div>
-      {/each}
-      </div>
-    {/each}
-    </div>
+    <Map grid={grid} users={users} round={round} />
   {:else}
-    {#if user === null}
-      <div class="login">
-        <h2>Log In/Sign up</h2>
-        <div>Name: <input type="text" bind:value={loginName}/></div>
-        <div>Password: <input type="password" bind:value={loginPass} /></div>
-        <button onclick={loginOrSignUp}>Submit</button>
-        {#if error}
-          <p style="color: red;">{error}</p>
-        {/if}
-      </div>
+    {#if userId === null}
+      <Login />
     {:else}
-      <p style="border-bottom: 5px solid #{padHex(user.id.toString(16))}">Playing as <b>{user.name}</b></p>
+      <p style="border-bottom: 5px solid #{padHex(userId.toString(16))}">Playing as <b>{user.name}</b></p>
       <p>
-        <img src="https://www.pngall.com/wp-content/uploads/2016/03/Cheese-Free-Download-PNG.png" width="64" height="64"/>
-        <b>{user.cheeses}</b>
+        <img src="https://www.onlygfx.com/wp-content/uploads/2020/11/stack-of-gold-coins-1-624x558.png" width="64" height="64"/>
+        <b>{user.gold}</b> /
+        <b>{user.banked}</b>
       </p>
-      <div class="moves">
-        <div>
-          <button class="" onclick={() => move('n')}>↑</button>
+      <p>Hearts: {user.hearts}</p>
+      {#if !user.exited}
+        <div class="moves">
+          <div>
+            <button class="" onclick={() => move('n')}>↑</button>
+          </div>
+          <div>
+            <button class="" onclick={() => move('w')}>←</button>
+            <button class="" onclick={() => move('e')}>→</button>
+          </div>
+          <div>
+            <button class="" onclick={() => move('s')}>↓</button>
+          </div>
         </div>
-        <div>
-          <button class="" onclick={() => move('w')}>←</button>
-          <button class="" onclick={() => move('e')}>→</button>
-        </div>
-        <div>
-          <button class="" onclick={() => move('s')}>↓</button>
-        </div>
-      </div>
+        {#if nearChest}
+          <div class="open-chest"><button onclick={() => move('o')}>Open Chest</button></div>
+        {/if}
+      {:else if user.hearts === 0}
+        <p>Sorry, you died...</p>
+      {:else}
+        <p>You made it out! Wait for the next round to start</p>
+      {/if}
       {#if moveError}
         <p style="color: red">{moveError}</p>
       {/if}

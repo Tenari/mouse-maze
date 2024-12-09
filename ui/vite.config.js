@@ -10,6 +10,7 @@ export default defineConfig({
       '/map': 'http://localhost:3333',
       '/state': 'http://localhost:3333',
       '/chat': 'ws://localhost:3333',
+      '/Indiana-Jones-PNG-HD-Image.png': 'http://localhost:3333',
     }
   }
 });

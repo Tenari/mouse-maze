@@ -1,17 +1,19 @@
 const std = @import("std");
 const zap = @import("zap");
+const consts = @import("constants.zig");
 
 pub const NameType = [64:0]u8;
 const Self = @This();
 
-pub const DEFAULT_X: usize = 29;
-pub const DEFAULT_Y: usize = 20;
 pub const Printable = struct {
     id: u64,
     name: []const u8,
     x: usize,
     y: usize,
-    cheeses: usize,
+    gold: usize,
+    exited: bool,
+    hearts: u8,
+    banked: usize,
 };
 
 // fields
@@ -20,9 +22,12 @@ name: NameType,
 name_len: u8,
 pw_hash: [64]u8,
 salt: [16]u8,
-x: usize = DEFAULT_X,
-y: usize = DEFAULT_Y,
-cheeses: usize = 0,
+x: usize = consts.DEFAULT_X,
+y: usize = consts.DEFAULT_Y,
+gold: usize = 0,
+exited: bool = false,
+hearts: u8 = 3,
+banked: usize = 0,
 
 // fns
 pub fn init(n: []const u8, pw: []const u8) Self {
@@ -66,7 +71,10 @@ pub fn toPrintable(self: *Self) Printable {
         .name = self.name[0..self.name_len],
         .x = self.x,
         .y = self.y,
-        .cheeses = self.cheeses,
+        .gold = self.gold,
+        .exited = self.exited,
+        .hearts = self.hearts,
+        .banked = self.banked,
     };
 }
 
@@ -77,3 +85,13 @@ pub fn print(self: *Self, buf: []u8) []const u8 {
         return "null";
     }
 }
+
+pub fn takeDamage(self: *Self, amount: u8) void {
+    if (self.hearts > amount) {
+        self.hearts -= amount;
+    } else {
+        self.hearts = 0;
+        self.gold = 0;
+    }
+}
+

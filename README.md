@@ -22,10 +22,17 @@ on the "projector" screen press "P" and "Enter" to put it in fullscreen
 - [x] add cheeses to collect, change win condition to "first to exit the map with N cheeses"
 - [x] reset-able games
 
-## transform it into the temple-run
+## transform it into the temple-run/incan-gold
 
-- [ ] auto-reset and keep score across 3 rounds
-- [ ] traps
+- [x] gold amounts
+- [x] treasure chest
+- [x] hearts for life
+- [x] auto-reset and keep score across 3 rounds
+- [x] trapped chests
+- [ ] display hearts as hearts not a number
+- [ ] better player icon
+- [ ] bigger squares
+- [ ] space out the buttons
 - [ ] monsters
 - [ ] limit your move speed
     - either mad-dash/speed-clicking

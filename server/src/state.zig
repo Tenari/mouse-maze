@@ -2,27 +2,23 @@ const std = @import("std");
 const zap = @import("zap");
 const User = @import("user.zig");
 const Tile = @import("tile.zig");
+const consts = @import("constants.zig");
+const MAP_HEIGHT = consts.MAP_HEIGHT;
+const MAP_LENGTH = consts.MAP_LENGTH;
 
 const Self = @This();
 
 const UserMap = std.AutoHashMap(u64, User);
 const Hash = std.crypto.hash.sha2.Sha256;
 const Token = [Hash.digest_length * 2]u8;
-const MAP_LENGTH = 31;//46; on my projector, max size
-const MAP_HEIGHT = 21;//26; on my projector
-const CHEESE_TO_WIN = 2;
 
 const Printable = struct {
     map: [MAP_HEIGHT][MAP_LENGTH]Tile,
     users: []User.Printable,
-    winner: ?[]const u8,
+    round: u8,
 };
-const Direction = enum(u8) {
-    north = 110,
-    south = 115,
-    east = 101,
-    west = 119,
-};
+
+const Direction = enum(u8) { north = 110, south = 115, east = 101, west = 119, };
 
 // fields
 alloc: std.mem.Allocator = undefined,
@@ -32,8 +28,8 @@ sessions: std.StringHashMap(u64) = undefined, // str -> user id
 session_lock: std.Thread.Mutex = .{},
 token_name: []const u8 = "gc_token",
 map: [MAP_HEIGHT][MAP_LENGTH]Tile,
-winner: ?User.NameType = null,
 main_lock: std.Thread.Mutex = .{},
+round: u8 = 1,
 
 // fns
 pub fn init(alloc: std.mem.Allocator) !Self {
@@ -141,7 +137,6 @@ fn generateMaze(comptime len: usize, comptime height: usize, alloc: std.mem.Allo
             }
             // if `next` is already in our path, it's a loop, so erase the loop
             if (previous_index != path.items.len - 1) {
-                std.debug.print("loop node: previous_index: {d} at {d}, {d}\n", .{previous_index, path.items[previous_index].x, path.items[previous_index].y});
                 for (path.items[previous_index+1..], 0..) |loop_cell, i| {
                     // clear the loop_cell
                     if (loop_cell != next.?) {
@@ -158,26 +153,47 @@ fn generateMaze(comptime len: usize, comptime height: usize, alloc: std.mem.Allo
     map[0][1].kind = .exit;
     map[height - 1][len - 2].kind = .grass;
     map[height - 1][len - 2].hidden = false;
-    return map;
-}
 
-fn addRandomCheese(self: *Self, count: u8) void {
-    var prng = std.rand.DefaultPrng.init(@intCast(std.time.timestamp()));
-    const random = prng.random();
-    var added: u8 = 0;
-    while (added < count) {
-        const tile = randomTile(MAP_LENGTH, MAP_HEIGHT, random, &self.map);
-        if (tile.cheese == false and tile.kind == .grass) {
-            tile.cheese = true;
-            added += 1;
+    for (0..height) |y| {
+        for (0..len) |x| {
+            const north = getTileCheckedFromMap(MAP_HEIGHT, MAP_LENGTH, &map, x, y, .north);
+            const south = getTileCheckedFromMap(MAP_HEIGHT, MAP_LENGTH, &map, x, y, .south);
+            const east = getTileCheckedFromMap(MAP_HEIGHT, MAP_LENGTH, &map, x, y, .east);
+            const west = getTileCheckedFromMap(MAP_HEIGHT, MAP_LENGTH, &map, x, y, .west);
+            var surroundingStoneCount: u8 = 0;
+            if (north != null and north.?.kind == .stone) {
+                surroundingStoneCount += 1;
+            }
+            if (south != null and south.?.kind == .stone) {
+                surroundingStoneCount += 1;
+            }
+            if (east != null and east.?.kind == .stone) {
+                surroundingStoneCount += 1;
+            }
+            if (west != null and west.?.kind == .stone) {
+                surroundingStoneCount += 1;
+            }
+            if (surroundingStoneCount == 3 and map[y][x].kind != .stone) {
+                switch (random.intRangeAtMost(u8, 0, 2)) {
+                    0 => {
+                        map[y][x].gold = random.intRangeAtMost(u8, 1, 8);
+                    },
+                    1 => {
+                        map[y][x].gold = random.intRangeAtMost(u8, 7, 16);
+                        map[y][x].chest = true;
+                        map[y][x].trapped = random.intRangeAtMost(u8, 0, 2) == 0;
+                    },
+                    else => {},
+                }
+            }
         }
     }
+    return map;
 }
 
 pub fn reset(self: *Self) void {
     self.main_lock.lock();
     defer self.main_lock.unlock();
-    self.winner = null;
     self.map = generateMaze(MAP_LENGTH, MAP_HEIGHT, self.alloc) catch self.map;
     {
         self.user_lock.lock();
@@ -185,11 +201,13 @@ pub fn reset(self: *Self) void {
         var it = self.users.keyIterator();
         while (it.next()) |key| {
             if (self.users.getPtr(key.*)) |user| {
-                user.cheeses = 0;
-                user.x = User.DEFAULT_X;
-                user.y = User.DEFAULT_Y;
+                user.x = consts.DEFAULT_X;
+                user.y = consts.DEFAULT_Y;
+                user.banked += user.gold;
+                user.gold = 0;
+                user.hearts = 3;
+                user.exited = false;
             }
-            self.addRandomCheese(3);
         }
     }
 }
@@ -211,7 +229,6 @@ pub fn addUser(self: *Self, user: User) !void {
         defer self.user_lock.unlock();
         try self.users.put(user.id, user);
     }
-    self.addRandomCheese(3);
 }
 
 pub fn userFromToken(self: *Self, token: []const u8) ?*User {
@@ -268,21 +285,10 @@ pub fn writeJson(self: *Self, buf: []u8) []const u8 {
     while (iter.next()) |item| {
         users.append(item.toPrintable()) catch return "null";
     }
-    var winner: ?[]const u8 = null;
-    if (self.winner) |w| {
-        var i: usize = 0;
-        for (w, 0..) |char, ii| {
-            if (char == 0) {
-                i = ii;
-                break;
-            }
-        }
-        winner = w[0..i];
-    }
     if (zap.stringifyBuf(buf, Printable {
         .users = users.items,
         .map = self.map,
-        .winner = winner,
+        .round = self.round,
     }, .{})) |result| {
         return result;
     } else {
@@ -290,9 +296,44 @@ pub fn writeJson(self: *Self, buf: []u8) []const u8 {
     }
 }
 
+fn attemptToOpenChest(user: *User, tile: *Tile) void {
+    if (tile.trapped) {
+        user.takeDamage(1);
+        tile.trapped = false;
+        tile.exploded_at = std.time.timestamp() * 1000;
+    } else {
+        tile.chest = false;
+    }
+}
+
 pub fn move(self: *Self, user: *User, direction: [1]u8) !void {
+    defer {
+        if (self.isGameFinished()) {
+            self.round += 1;
+            self.reset();
+        }
+    }
+    if (self.round == 4 or user.exited or user.hearts == 0) {
+        return;
+    }
     self.main_lock.lock();
     defer self.main_lock.unlock();
+    if (direction[0] == 111) { // 'o'
+        const maybe_north = self.getTileChecked(user.x, user.y, .north);
+        const maybe_south = self.getTileChecked(user.x, user.y, .south);
+        const maybe_east = self.getTileChecked(user.x, user.y, .east);
+        const maybe_west = self.getTileChecked(user.x, user.y, .west);
+        if (maybe_north != null and maybe_north.?.kind == .grass and maybe_north.?.chest) {
+            attemptToOpenChest(user, maybe_north.?);
+        } else if (maybe_south != null and maybe_south.?.kind == .grass and maybe_south.?.chest) {
+            attemptToOpenChest(user, maybe_south.?);
+        } else if (maybe_east != null and maybe_east.?.kind == .grass and maybe_east.?.chest) {
+            attemptToOpenChest(user, maybe_east.?);
+        } else if (maybe_west != null and maybe_west.?.kind == .grass and maybe_west.?.chest) {
+            attemptToOpenChest(user, maybe_west.?);
+        }
+        return;
+    }
 
     const new_tile = self.getTileChecked(user.x, user.y, @enumFromInt(direction[0]));
     if (new_tile) |tile| {
@@ -300,45 +341,67 @@ pub fn move(self: *Self, user: *User, direction: [1]u8) !void {
         self.unhideVisibleHalls(tile.x, tile.y);
         switch (tile.kind) {
             .grass => {
+                if (tile.chest) {
+                    return; // you can't move when there's a chest there
+                }
                 // update the user
                 user.x = tile.x;
                 user.y = tile.y;
                 // un-hide the tile
                 tile.hidden = false;
-                if (tile.cheese) {
-                    tile.cheese = false;
-                    user.cheeses += 1;
+                if (tile.gold > 0 and !tile.chest) {
+                    user.gold += tile.gold;
+                    tile.gold = 0;
                 }
             },
             .exit => {
-                if (user.cheeses >= CHEESE_TO_WIN) {
-                    // win the game
-                    self.winner = user.name;
-                } else {
-                    return error.NotEnoughCheese;
-                }
+                user.exited = true;
             },
-            .stone => {
-                // don't need to do anything else... they cant move
-            },
+            .stone => {},// don't need to do anything else... they cant move
         }
     }
 }
 
-fn getTileChecked(self: *Self, x: u64, y: u64, direction: Direction) ?*Tile {
+fn isGameFinished(self: *Self) bool {
+    var finished: bool = true;
+    {
+        self.user_lock.lock();
+        defer self.user_lock.unlock();
+        var it = self.users.valueIterator();
+        while (it.next()) |user| {
+            if (!user.exited and user.hearts > 0) {
+                finished = false;
+            }
+        }
+    }
+    return finished;
+}
+
+fn getTileCheckedFromMap(
+    comptime height: usize,
+    comptime len: usize,
+    map: *[height][len]Tile,
+    x: u64,
+    y: u64,
+    direction: Direction
+) ?*Tile {
     if (direction == .north and y > 0) {
-        return &self.map[y-1][x];
+        return &map[y-1][x];
     }
     if (direction == .south and y < MAP_HEIGHT - 1) {
-        return &self.map[y+1][x];
+        return &map[y+1][x];
     }
     if (direction == .west and x > 0) {
-        return &self.map[y][x-1];
+        return &map[y][x-1];
     }
     if (direction == .east and x < MAP_LENGTH - 1) {
-        return &self.map[y][x+1];
+        return &map[y][x+1];
     }
     return null;
+}
+
+fn getTileChecked(self: *Self, x: u64, y: u64, direction: Direction) ?*Tile {
+    return getTileCheckedFromMap(MAP_HEIGHT, MAP_LENGTH, &self.map, x, y, direction);
 }
 
 // in a 5 tile-radius, mark everything not blocked by a wall as hidden=false
