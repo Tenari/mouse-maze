@@ -22,12 +22,13 @@
   import Results from './Results.svelte';
   import Map from './Map.svelte';
   import Login from './Login.svelte';
-  import { user, users, userId } from './user.svelte.js';
+  import { ctx } from './state.svelte.js';
   import { padHex } from '$lib/index.js';
   let round = $state(1);
   let grid = $state([]);
   let mode = $state('user');
   let moveError = $state(false);
+  let user = $derived((ctx.users || []).find(u => u.id === ctx.userId));
 
   const move = (direction) => {
     fetch(
@@ -44,7 +45,7 @@
       } else {
         moveError = false;
         if (data.users) {
-          users = data.users;
+          ctx.users = data.users;
         }
         if (data.map) {
           grid = data.map
@@ -64,10 +65,10 @@
   $effect(() => {
     fetch('/user').then((data)=> data.json()).then((data) => {
       if (data.name) {
-        if (!users.find(u => u.id === data.id)) {
-          users.push(data);
+        if (!ctx.users.find(u => u.id === data.id)) {
+          ctx.users.push(data);
         }
-        userId = data.id;
+        ctx.userId = data.id;
       }
     });
 
@@ -96,7 +97,7 @@
             console.log('message', data);
             if (data.map) {
               grid = data.map;
-              users = data.users;
+              ctx.users = data.users;
               if (data.round) {
                 round = data.round;
               }
@@ -145,12 +146,12 @@
   <Results />
 {:else}
   {#if mode == 'map'}
-    <Map grid={grid} users={users} round={round} />
+    <Map grid={grid} round={round} />
   {:else}
-    {#if userId === null}
+    {#if ctx.userId === null || !user}
       <Login />
     {:else}
-      <p style="border-bottom: 5px solid #{padHex(userId.toString(16))}">Playing as <b>{user.name}</b></p>
+      <p style="border-bottom: 5px solid #{padHex(ctx.userId.toString(16))}">Playing as <b>{user.name}</b></p>
       <p>
         <img src="https://www.onlygfx.com/wp-content/uploads/2020/11/stack-of-gold-coins-1-624x558.png" width="64" height="64"/>
         <b>{user.gold}</b> /

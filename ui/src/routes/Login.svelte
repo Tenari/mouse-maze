@@ -30,7 +30,7 @@
 </style>
 
 <script>
-  import { userId } from './user.svelte.js';
+  import { ctx } from './state.svelte.js';
   let loginName = $state("");
   let loginPass = $state("");
   let error = $state(false);
@@ -48,7 +48,7 @@
         body: JSON.stringify({name: loginName, pw: loginPass})
       }
     ).then((data) => data.json()).then((data) => {
-        userId = data.id;
+        ctx.userId = data.id;
     })
   };
 </script>

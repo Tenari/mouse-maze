@@ -26,7 +26,8 @@
 
 <script>
   import { padHex } from '$lib/index.js';
-  let { grid, users, round } = $props();
+  import { ctx } from './state.svelte.js';
+  let { grid, round } = $props();
 </script>
 
 <h1>Treasure Hunt - Round #{round}</h1>
@@ -43,7 +44,7 @@
         {:else if tile.chest}
           <img src="https://png.pngtree.com/png-clipart/20230103/original/pngtree-old-rusty-closed-treasure-chest-side-view-transparent-png-image_8864712.png" width="32" height="32"/>
         {:else}
-          {#each users as user}
+          {#each ctx.users as user}
             {#if !user.exited && user.x == tile.x && user.y == tile.y && user.hearts > 0}
               <img src="Indiana-Jones-PNG-HD-Image.png" width="37" height="37" style="border-bottom: 3px solid #{padHex(user.id.toString(16))}"/>
             {/if}

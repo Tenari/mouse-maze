@@ -14,8 +14,8 @@
 </style>
 
 <script>
-  import { users } from './user.svelte.js';
-  let results = $derived(users.toSorted((a,b)=> b.banked - a.banked));
+  import { ctx } from './state.svelte.js';
+  let results = $derived(ctx.users.toSorted((a,b)=> b.banked - a.banked));
 </script>
 
 <div class="centered-400">
