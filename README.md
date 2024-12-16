@@ -29,8 +29,8 @@ on the "projector" screen press "P" and "Enter" to put it in fullscreen
 - [x] hearts for life
 - [x] auto-reset and keep score across 3 rounds
 - [x] trapped chests
-- [ ] display hearts as hearts not a number
-- [ ] better player icon
+- [x] display hearts as hearts not a number
+- [x] better player icon
 - [ ] bigger squares
 - [ ] space out the buttons
 - [ ] monsters

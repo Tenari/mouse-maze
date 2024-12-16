@@ -71,6 +71,27 @@
         ctx.userId = data.id;
       }
     });
+    const wsstr = window.location.host.includes("zapata") ? "wss" : "ws";
+    var ws = new WebSocket(`${wsstr}://${window.location.host}/chat`);
+    ws.onmessage = function(e) {
+      var data = JSON.parse(e.data);
+      console.log('message', data);
+      if (data && data.map) {
+        grid = data.map;
+        ctx.users = data.users;
+        if (data.round) {
+          round = data.round;
+        }
+      }
+      return false;
+    };
+    ws.onclose = function(e) {
+      console.log('closed', e);
+    };
+
+    ws.onopen = function(e) {
+        console.log('open', e);
+    };
 
     document.addEventListener(
       "keydown",
@@ -90,27 +111,6 @@
         }
         if (e.key === "P") {
           mode = 'map';
-          const wsstr = window.location.host.includes("zapata") ? "wss" : "ws";
-          var ws = new WebSocket(`${wsstr}://${window.location.host}/chat`);
-          ws.onmessage = function(e) {
-            var data = JSON.parse(e.data);
-            console.log('message', data);
-            if (data.map) {
-              grid = data.map;
-              ctx.users = data.users;
-              if (data.round) {
-                round = data.round;
-              }
-            }
-            return false;
-          };
-          ws.onclose = function(e) {
-            console.log('closed', e);
-          };
-
-          ws.onopen = function(e) {
-              console.log('open', e);
-          };
         }
         if (e.key === "w" && user) {
           move('n');
@@ -157,7 +157,17 @@
         <b>{user.gold}</b> /
         <b>{user.banked}</b>
       </p>
-      <p>Hearts: {user.hearts}</p>
+      <p>Hearts: 
+        {#if user.hearts == 3}
+          <img src="heart.png" width="32" height="32"/>
+        {/if}
+        {#if user.hearts >= 2}
+          <img src="heart.png" width="32" height="32"/>
+        {/if}
+        {#if user.hearts >= 1}
+          <img src="heart.png" width="32" height="32"/>
+        {/if}
+      </p>
       {#if !user.exited}
         <div class="moves">
           <div>

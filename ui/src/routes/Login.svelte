@@ -48,7 +48,10 @@
         body: JSON.stringify({name: loginName, pw: loginPass})
       }
     ).then((data) => data.json()).then((data) => {
-        ctx.userId = data.id;
+      ctx.userId = data.id;
+      if (!ctx.users.find(u => u.id === data.id)) {
+        ctx.users.push(data);
+      }
     })
   };
 </script>

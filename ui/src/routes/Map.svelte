@@ -46,7 +46,7 @@
         {:else}
           {#each ctx.users as user}
             {#if !user.exited && user.x == tile.x && user.y == tile.y && user.hearts > 0}
-              <img src="Indiana-Jones-PNG-HD-Image.png" width="37" height="37" style="border-bottom: 3px solid #{padHex(user.id.toString(16))}"/>
+              <img src="character.png" width="37" height="37" style="border-bottom: 3px solid #{padHex(user.id.toString(16))}"/>
             {/if}
           {/each}
         {/if}
