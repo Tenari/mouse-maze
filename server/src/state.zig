@@ -2,13 +2,15 @@ const std = @import("std");
 const zap = @import("zap");
 const User = @import("user.zig");
 const Tile = @import("tile.zig");
+const Monster = @import("monster.zig");
 const consts = @import("constants.zig");
 const MAP_HEIGHT = consts.MAP_HEIGHT;
 const MAP_LENGTH = consts.MAP_LENGTH;
+const MAX_MONSTERS = consts.MAX_MONSTERS;
+const WALLS_TO_CLEAR = consts.WALLS_TO_CLEAR;
 
 const Self = @This();
 
-const UserMap = std.AutoHashMap(u64, User);
 const Hash = std.crypto.hash.sha2.Sha256;
 const Token = [Hash.digest_length * 2]u8;
 
@@ -16,34 +18,53 @@ const Printable = struct {
     map: [MAP_HEIGHT][MAP_LENGTH]Tile,
     users: []User.Printable,
     round: u8,
+    monsters: []Monster,
 };
 
 const Direction = enum(u8) { north = 110, south = 115, east = 101, west = 119, };
 
 // fields
 alloc: std.mem.Allocator = undefined,
-users: UserMap = undefined,
+users: std.ArrayList(User) = undefined,
 user_lock: std.Thread.Mutex = .{},
-sessions: std.StringHashMap(u64) = undefined, // str -> user id
+sessions: std.StringHashMap(usize) = undefined, // str -> user index
 session_lock: std.Thread.Mutex = .{},
 token_name: []const u8 = "gc_token",
 map: [MAP_HEIGHT][MAP_LENGTH]Tile,
 main_lock: std.Thread.Mutex = .{},
 round: u8 = 1,
+user_moves: usize = 0,
+monsters: std.ArrayList(Monster),
 
 // fns
 pub fn init(alloc: std.mem.Allocator) !Self {
     return .{
         .alloc = alloc,
-        .users = UserMap.init(alloc),
-        .sessions = std.StringHashMap(u64).init(alloc),
+        .users = std.ArrayList(User).init(alloc),
+        .sessions = std.StringHashMap(usize).init(alloc),
         .map = try generateMaze(MAP_LENGTH, MAP_HEIGHT, alloc),
+        .monsters = std.ArrayList(Monster).init(alloc),
     };
+}
+
+pub fn getUserByName(self: *Self, name: User.NameType) ?*User {
+    for (self.users.items) |*u| {
+        if (std.mem.eql(u8, &u.name, &name)) {
+            return u;
+        }
+    }
+    return null;
 }
 
 fn randomTile(comptime len: usize, comptime height: usize, random: std.Random, map: *[height][len]Tile) *Tile {
     const x = ((random.int(usize) % @divFloor(len, 2)) * 2) + 1;
     const y = ((random.int(usize) % @divFloor(height, 2)) * 2) + 1;
+    return &map[y][x];
+}
+
+fn randomWallTile(comptime len: usize, comptime height: usize, random: std.Random, map: *[height][len]Tile) *Tile {
+    const x = ((random.int(usize) % (@divFloor(len, 2) - 1)) * 2) + 2;
+    const y = ((random.int(usize) % (@divFloor(height, 2) - 1)) * 2) + 2;
     return &map[y][x];
 }
 
@@ -150,16 +171,55 @@ fn generateMaze(comptime len: usize, comptime height: usize, alloc: std.mem.Allo
             }
         }
     }
+    // setup the exit and the starting position
     map[0][1].kind = .exit;
     map[height - 1][len - 2].kind = .grass;
     map[height - 1][len - 2].hidden = false;
+    // clear some random walls to make the maze more traversable
+    std.debug.print("starting clearing some walls: ", .{});
+    for (0..WALLS_TO_CLEAR) |_| {
+        var to_clear = randomWallTile(len, height, random, &map);
+        // ensure the start of this path is currently "blank" ie .stone
+        while (to_clear.kind != .stone) {
+            to_clear = randomWallTile(len, height, random, &map);
+        }
+        map[to_clear.y][to_clear.x].kind = .grass;
+    }
+    std.debug.print("finished \n", .{});
 
+    var tiles = [_]?*Tile {null} ** (MAP_HEIGHT*MAP_LENGTH);
+    fillDeadEnds(MAP_HEIGHT, MAP_LENGTH, &map, &tiles);
+    for (tiles) |maybe_tile| {
+        if (maybe_tile) |tile| {
+            switch (random.intRangeAtMost(u8, 0, 2)) {
+                0 => {
+                    map[tile.y][tile.x].gold = random.intRangeAtMost(u8, 1, 8);
+                },
+                1 => {
+                    map[tile.y][tile.x].gold = random.intRangeAtMost(u8, 7, 16);
+                    map[tile.y][tile.x].chest = true;
+                    map[tile.y][tile.x].trapped = random.intRangeAtMost(u8, 0, 2) == 0;
+                },
+                else => {},
+            }
+        }
+    }
+    return map;
+}
+
+fn fillDeadEnds(
+    comptime height: usize,
+    comptime len: usize,
+    map: *[height][len]Tile,
+    buffer: []?*Tile,
+) void {
+    var i: usize = 0;
     for (0..height) |y| {
         for (0..len) |x| {
-            const north = getTileCheckedFromMap(MAP_HEIGHT, MAP_LENGTH, &map, x, y, .north);
-            const south = getTileCheckedFromMap(MAP_HEIGHT, MAP_LENGTH, &map, x, y, .south);
-            const east = getTileCheckedFromMap(MAP_HEIGHT, MAP_LENGTH, &map, x, y, .east);
-            const west = getTileCheckedFromMap(MAP_HEIGHT, MAP_LENGTH, &map, x, y, .west);
+            const north = getTileCheckedFromMap(height, len, map, x, y, .north);
+            const south = getTileCheckedFromMap(height, len, map, x, y, .south);
+            const east = getTileCheckedFromMap(height, len, map, x, y, .east);
+            const west = getTileCheckedFromMap(height, len, map, x, y, .west);
             var surroundingStoneCount: u8 = 0;
             if (north != null and north.?.kind == .stone) {
                 surroundingStoneCount += 1;
@@ -174,42 +234,220 @@ fn generateMaze(comptime len: usize, comptime height: usize, alloc: std.mem.Allo
                 surroundingStoneCount += 1;
             }
             if (surroundingStoneCount == 3 and map[y][x].kind != .stone) {
-                switch (random.intRangeAtMost(u8, 0, 2)) {
-                    0 => {
-                        map[y][x].gold = random.intRangeAtMost(u8, 1, 8);
-                    },
-                    1 => {
-                        map[y][x].gold = random.intRangeAtMost(u8, 7, 16);
-                        map[y][x].chest = true;
-                        map[y][x].trapped = random.intRangeAtMost(u8, 0, 2) == 0;
-                    },
-                    else => {},
+                buffer[i] = &map[y][x];
+                i += 1;
+            }
+        }
+    }
+}
+
+pub fn spawnMonster(self: *Self, random: std.Random) void {
+    if (self.monsters.items.len > MAX_MONSTERS) {
+        return;
+    }
+    var tiles = [_]?*Tile {null} ** (MAP_HEIGHT*MAP_LENGTH);
+    fillDeadEnds(MAP_HEIGHT, MAP_LENGTH, &self.map, &tiles);
+    var iters: u8 = 0;
+    while (iters < 255) {
+       const i = random.intRangeAtMost(usize, 0, tiles.len - 1);
+       if (tiles[i]) |tile| {
+            if (
+                tile.gold == 0
+                and tile.x > 5
+                and tile.y > 5
+                and !self.isUserAt(tile.x, tile.y)
+                and !self.isMonsterAt(tile.x, tile.y)
+            ) {
+                const uid = random.intRangeAtMost(usize, 0, self.users.items.len - 1);
+                return self.monsters.append(Monster.init(tile.x, tile.y, uid)) catch return;
+            }
+       }
+       iters += 1;
+    }
+}
+
+fn manhattanDistance(x: i32, y: i32, tx: i32, ty: i32) i32 {
+  const dx = @abs(x - tx);
+  const dy = @abs(y - ty);
+  return @intCast(dx + dy);
+}
+
+const AStarPoint = struct {
+    x: usize,
+    y: usize,
+    priority: i32 = 0,
+    open: bool = true,
+    previous: ?*AStarPoint = null,
+};
+fn findHighestPriority(list: []AStarPoint) *AStarPoint {
+    var best: AStarPoint = undefined;
+    var index: usize = 0;
+    for (list, 0..) |item, i| {
+        if (item.open) {
+            best = item;
+            index = i;
+            break;
+        }
+    }
+    for (list, 0..) |item, i| {
+        if (item.priority < best.priority and item.open) {
+            best = item;
+            index = i;
+        }
+    }
+    return &list[index];
+}
+
+fn openCount(list: []AStarPoint) u32 {
+    var count: u32 = 0;
+    for (list) |item| {
+        if (item.open) {
+            count += 1;
+        }
+    }
+    return count;
+}
+
+fn nextIsTarget(list: []AStarPoint, x: usize, y: usize) bool {
+    const temp = findHighestPriority(list);
+    return temp.x == x and temp.y == y;
+}
+// pathfinds from (x,y) to (tx,ty), and returns the next direction to move
+fn aStar(self: *Self, x: usize, y: usize, tx: usize, ty: usize) Direction {
+    std.debug.print("aStar({d}, {d}, {d}, {d})\n", .{x, y, tx, ty});
+    var paths = std.ArrayList(AStarPoint).initCapacity(self.alloc, MAP_HEIGHT * MAP_LENGTH * 4) catch return .north;
+    defer paths.deinit();
+    paths.append(.{.x = x,.y = y}) catch return .north;
+    var costs = std.AutoHashMap(usize, i32).init(self.alloc);
+    defer costs.deinit();
+    costs.put((x*y)+y, 0) catch return .north;
+    var current_point: *AStarPoint = undefined;
+    while (
+        openCount(paths.items) > 0
+        and !nextIsTarget(paths.items, tx, ty)
+    ) {
+        current_point = findHighestPriority(paths.items);
+        current_point.open = false;
+        //std.debug.print("paths.len {d} checking ({d},{d})\n", .{paths.items.len, current_point.x, current_point.y});
+        if (current_point.x == tx and current_point.y == ty) {
+            break;
+        }
+        for (std.enums.values(Direction)) |dir| {
+            const maybe_tile = self.getTileChecked(current_point.x, current_point.y, dir);
+            if (maybe_tile) |tile| {
+                if (tile.kind == .grass) {
+                    var new_cost: i32 = 1;
+                    if (costs.get((current_point.x*current_point.y) + current_point.y)) |previous_cost| {
+                        new_cost = previous_cost + new_cost;
+                    }
+                    const key = (tile.x*tile.y) + tile.y;
+                    if (!costs.contains(key) or new_cost < costs.get(key).?) {
+                        costs.put(key, new_cost) catch return .north;
+                        paths.append(.{
+                            .x = tile.x,
+                            .y = tile.y,
+                            .priority = new_cost + manhattanDistance(@intCast(tile.x), @intCast(tile.y), @intCast(tx), @intCast(ty)),
+                            .previous = current_point,
+                        }) catch return .north;
+                    }
                 }
             }
         }
     }
-    return map;
+    std.debug.print("found path, walking back\n", .{});
+    // walk back up the path
+    while (current_point.previous != null and current_point.previous.?.previous != null) {
+        std.debug.print("({d},{d})", .{current_point.x, current_point.y});
+        current_point = current_point.previous.?;
+    }
+    std.debug.print("\n({d},{d}) vs ({d},{d})\n", .{current_point.x, current_point.y, x, y});
+    if (current_point.x == x and current_point.y > y) {
+        return .south;
+    } else if  (current_point.x == x and current_point.y < y) {
+        return .north;
+    } else if (current_point.x == x+1) {
+        return .east;
+    } else if (current_point.x == x-1) {
+        return .west;
+    }
+    return .north;
+}
+
+pub fn moveMonsters(self: *Self) void {
+    for (self.monsters.items, 0..) |*monster, i| {
+        std.debug.print("moving Monster #{d}: ", .{i});
+        const user = self.users.items[monster.target];
+        if (user.exited) {
+            if (monster.target == self.users.items.len - 1) {
+                monster.target = 0;
+            } else {
+                monster.target += 1;
+            }
+            continue;
+        }
+        const maybe_dir = self.getTileChecked(monster.x, monster.y, self.aStar(monster.x, monster.y, user.x, user.y));
+        if (maybe_dir) |tile| {
+            switch (tile.kind) {
+                .grass => {
+                    if (tile.chest) {
+                        return; // you can't move when there's a chest there
+                    }
+                    // update the monster location
+                    monster.x = tile.x;
+                    monster.y = tile.y;
+                    for (self.users.items) |*u| {
+                        if (monster.x == u.x and monster.y == u.y) {
+                            u.takeDamage(1);
+                            _ = self.monsters.swapRemove(i);
+                            return;
+                        }
+                    }
+                },
+                .exit => {},//monsters can't move on exit
+                .stone => {},// don't need to do anything else... they cant move
+            }
+        }
+    }
+}
+
+fn isUserAt(self: *Self, x: u64, y: u64) bool {
+    self.user_lock.lock();
+    defer self.user_lock.unlock();
+    for (self.users.items) |val| {
+        if (val.x == x and val.y == y) {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn isMonsterAt(self: *Self, x: u64, y: u64) bool {
+    for (self.monsters.items) |monster| {
+        if (monster.x == x and monster.y == y) {
+            return true;
+        }
+    }
+    return false;
 }
 
 pub fn reset(self: *Self) void {
     self.main_lock.lock();
     defer self.main_lock.unlock();
+    self.monsters.clearRetainingCapacity();
     self.map = generateMaze(MAP_LENGTH, MAP_HEIGHT, self.alloc) catch self.map;
     {
         self.user_lock.lock();
         defer self.user_lock.unlock();
-        var it = self.users.keyIterator();
-        while (it.next()) |key| {
-            if (self.users.getPtr(key.*)) |user| {
-                user.x = consts.DEFAULT_X;
-                user.y = consts.DEFAULT_Y;
-                user.banked += user.gold;
-                user.gold = 0;
-                user.hearts = 3;
-                user.exited = false;
-            }
+        for (self.users.items) |*user| {
+            user.x = consts.DEFAULT_X;
+            user.y = consts.DEFAULT_Y;
+            user.banked += user.gold;
+            user.gold = 0;
+            user.hearts = 3;
+            user.exited = false;
         }
     }
+    self.user_moves = 0;
 }
 
 pub fn deinit(self: *Self) void {
@@ -219,15 +457,16 @@ pub fn deinit(self: *Self) void {
         self.alloc.free(key_str.*);
     }
     self.sessions.deinit();
+    self.monsters.deinit();
 }
 
 pub fn addUser(self: *Self, user: User) !void {
-    if (self.users.contains(user.id)) {
+    if (self.getUserByName(user.name)) |_| {
         return error.UsernameAlreadyTaken;
     } else {
         self.user_lock.lock();
         defer self.user_lock.unlock();
-        try self.users.put(user.id, user);
+        try self.users.append(user);
     }
 }
 
@@ -236,10 +475,9 @@ pub fn userFromToken(self: *Self, token: []const u8) ?*User {
     self.session_lock.lock();
     defer self.session_lock.unlock();
     if (self.sessions.get(token)) |userid| {
-        std.debug.print("sessions.get(token): {d}\n", .{userid});
         // cookie is a valid session!
-        if (self.users.getPtr(userid)) |user| {
-            return user;
+        if (self.users.items.len > userid) {
+            return &self.users.items[userid];
         }
         // the `else` case here actually shouldn't happen,
         // since it represents a valid token without a matching user,
@@ -252,7 +490,7 @@ pub fn userFromToken(self: *Self, token: []const u8) ?*User {
     return null;
 }
 
-pub fn createSession(self: *Self, username: User.NameType) ![]const u8 {
+pub fn createSession(self: *Self, username: User.NameType, id: usize) ![]const u8 {
     var hasher = Hash.init(.{});
     hasher.update(&username);
     var buf: [16]u8 = undefined;
@@ -269,7 +507,7 @@ pub fn createSession(self: *Self, username: User.NameType) ![]const u8 {
     defer self.session_lock.unlock();
 
     if (!self.sessions.contains(token_str)) {
-        try self.sessions.put(try self.alloc.dupe(u8, token_str), User.nameToId(username));
+        try self.sessions.put(try self.alloc.dupe(u8, token_str), id);
     }
     return token_str;
 }
@@ -279,16 +517,16 @@ pub fn writeMapJson(self: *Self, buf: []u8) ?[]const u8 {
 }
 
 pub fn writeJson(self: *Self, buf: []u8) []const u8 {
-    var iter = self.users.valueIterator();
     var users = std.ArrayList(User.Printable).init(self.alloc);
     defer users.deinit();
-    while (iter.next()) |item| {
+    for (self.users.items) |*item| {
         users.append(item.toPrintable()) catch return "null";
     }
     if (zap.stringifyBuf(buf, Printable {
         .users = users.items,
         .map = self.map,
         .round = self.round,
+        .monsters = self.monsters.items,
     }, .{})) |result| {
         return result;
     } else {
@@ -303,6 +541,16 @@ fn attemptToOpenChest(user: *User, tile: *Tile) void {
         tile.exploded_at = std.time.timestamp() * 1000;
     } else {
         tile.chest = false;
+    }
+}
+
+fn collideMonster(self: *Self, user: *User) void {
+    for (self.monsters.items, 0..) |monster, i| {
+        if (monster.x == user.x and monster.y == user.y) {
+            user.takeDamage(1);
+            _ = self.monsters.swapRemove(i);
+            return;
+        }
     }
 }
 
@@ -349,10 +597,12 @@ pub fn move(self: *Self, user: *User, direction: [1]u8) !void {
                 user.y = tile.y;
                 // un-hide the tile
                 tile.hidden = false;
+                self.user_moves += 1;
                 if (tile.gold > 0 and !tile.chest) {
                     user.gold += tile.gold;
                     tile.gold = 0;
                 }
+                self.collideMonster(user);
             },
             .exit => {
                 user.exited = true;
@@ -367,8 +617,7 @@ fn isGameFinished(self: *Self) bool {
     {
         self.user_lock.lock();
         defer self.user_lock.unlock();
-        var it = self.users.valueIterator();
-        while (it.next()) |user| {
+        for (self.users.items) |user| {
             if (!user.exited and user.hearts > 0) {
                 finished = false;
             }

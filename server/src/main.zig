@@ -4,7 +4,9 @@ const User = @import("user.zig");
 const State = @import("state.zig");
 const Ws = @import("ws.zig");
 
-const PORT = 3333;
+const PORT = 3334;
+const FPS: i128 = 1;
+const GOAL_LOOP_TIME: i128 = std.time.ns_per_s / FPS;
 
 // GLOBALS
 var state: State = undefined;
@@ -100,10 +102,10 @@ fn createOrLoginUser(r: zap.Request, session: ?Session) void {
         return r.sendJson("{\"error\":\"missing `pw` parameter\"}") catch return;
     }
 
-    if (state.users.getPtr(User.nameToId(name))) |user| {
+    if (state.getUserByName(name)) |user| {
         // log them in
         if (user.checkPw(&pw)) {
-            const token = state.createSession(user.name) catch {
+            const token = state.createSession(user.name, user.id) catch {
                 r.sendJson("{\"error\":\"could not login user?\"}") catch return;
                 return;
             };
@@ -125,12 +127,12 @@ fn createOrLoginUser(r: zap.Request, session: ?Session) void {
         }
     } else {
         // create the user
-        var user = User.init(&name, &pw);
+        var user = User.init(&name, &pw, state.users.items.len);
         state.addUser(user) catch |e| {
             zap.debug("could not add user: {any}", .{e});
             return r.sendJson("{\"error\":\"could not add user?\"}") catch return;
         };
-        const token = state.createSession(user.name) catch {
+        const token = state.createSession(user.name, user.id) catch {
             return r.sendJson("{\"error\":\"could not login user?\"}") catch return;
         };
         defer state.alloc.free(token);
@@ -320,6 +322,14 @@ pub fn main() !void {
 
         std.debug.print("server live at http://127.0.0.1:{d}\n", .{PORT});
 
+        // spin off thread for the auto-occuring game actions
+        const game_thread_handle = try std.Thread.spawn(
+            .{},
+            gameLoop,
+            .{}
+        );
+        game_thread_handle.detach();
+
         // start worker threads
         zap.start(.{
             .threads = 1,
@@ -331,5 +341,33 @@ pub fn main() !void {
     std.debug.print("\n\nSTOPPED!\n", .{});
     const leaked = gpa.detectLeaks();
     std.debug.print("Leaks detected: {}\n", .{leaked});
+}
+
+fn gameLoop() void {
+    var prng = std.rand.DefaultPrng.init(@intCast(std.time.timestamp()));
+    const random = prng.random();
+    var buf: [1024*32*4]u8 = undefined;
+    while (true) {
+        const loop_start = std.time.nanoTimestamp();
+
+        state.main_lock.lock();
+
+        // if every user has moved 10 spaces (on average), then we spawn the ai
+        if (state.user_moves > 0 and state.user_moves / state.users.items.len >= 10) {
+            state.user_moves = 0;// clear the move-count
+            state.spawnMonster(random);
+        }
+        state.moveMonsters();
+
+        const json_to_send: []const u8 = state.writeJson(&buf);
+        Ws.Handler.publish(.{ .channel = "state", .message = json_to_send });
+        state.main_lock.unlock();
+
+        const loop_duration = std.time.nanoTimestamp() - loop_start;
+        const remaining_time = GOAL_LOOP_TIME - loop_duration;
+        if (remaining_time > 0) {
+            std.time.sleep(@intCast(remaining_time));
+        }
+    }
 }
 

@@ -31,9 +31,10 @@ on the "projector" screen press "P" and "Enter" to put it in fullscreen
 - [x] trapped chests
 - [x] display hearts as hearts not a number
 - [x] better player icon
+- [x] monsters
+- [ ] different player avatars
 - [ ] bigger squares
 - [ ] space out the buttons
-- [ ] monsters
 - [ ] limit your move speed
     - either mad-dash/speed-clicking
     - or turn-based n-moves per turn

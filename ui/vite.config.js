@@ -1,18 +1,20 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
+const path = 'http://localhost:3334';
 export default defineConfig({
   plugins: [sveltekit()],
   server: {
     proxy: {
-      '/user': 'http://localhost:3333',
-      '/game': 'http://localhost:3333',
-      '/map': 'http://localhost:3333',
-      '/state': 'http://localhost:3333',
-      '/chat': 'ws://localhost:3333',
-      '/Indiana-Jones-PNG-HD-Image.png': 'http://localhost:3333',
-      '/heart.png': 'http://localhost:3333',
-      '/character.png': 'http://localhost:3333',
+      '/user': path,
+      '/game': path,
+      '/map': path,
+      '/state': path,
+      '/chat': 'ws://localhost:3334',
+      '/Indiana-Jones-PNG-HD-Image.png': path,
+      '/heart.png': path,
+      '/snake.png': path,
+      '/character.png': path,
     }
   }
 });

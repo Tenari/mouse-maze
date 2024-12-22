@@ -6,7 +6,7 @@ pub const NameType = [64:0]u8;
 const Self = @This();
 
 pub const Printable = struct {
-    id: u64,
+    id: usize,
     name: []const u8,
     x: usize,
     y: usize,
@@ -17,7 +17,7 @@ pub const Printable = struct {
 };
 
 // fields
-id: u64,
+id: usize,
 name: NameType,
 name_len: u8,
 pw_hash: [64]u8,
@@ -30,7 +30,7 @@ hearts: u8 = 3,
 banked: usize = 0,
 
 // fns
-pub fn init(n: []const u8, pw: []const u8) Self {
+pub fn init(n: []const u8, pw: []const u8, index: usize) Self {
     var name = [_:0]u8 { 0 } ** 64;
     std.mem.copyForwards(u8, &name, n);
     var hash = [_]u8 { 0 } ** 64;
@@ -42,21 +42,12 @@ pub fn init(n: []const u8, pw: []const u8) Self {
         i += 1;
     }
     return .{
-        .id = Self.nameToId(name),
+        .id = index,
         .name = name,
         .name_len = i,
         .pw_hash = hash,
         .salt = salt,
     };
-}
-
-pub fn nameToId(name: NameType) u64 {
-    var i: u8 = 0;
-    for (name) |char| {
-        if (char == 0) break;
-        i += 1;
-    }
-    return std.hash.Wyhash.hash(1234, name[0..i]) % 1000000;
 }
 
 pub fn checkPw(self: Self, pw: []const u8) bool {

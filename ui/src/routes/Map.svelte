@@ -44,6 +44,11 @@
         {:else if tile.chest}
           <img src="https://png.pngtree.com/png-clipart/20230103/original/pngtree-old-rusty-closed-treasure-chest-side-view-transparent-png-image_8864712.png" width="32" height="32"/>
         {:else}
+          {#each ctx.monsters as monster}
+            {#if monster.x == tile.x && monster.y == tile.y}
+              <img src="{monster.kind}.png" width="37" height="37"/>
+            {/if}
+          {/each}
           {#each ctx.users as user}
             {#if !user.exited && user.x == tile.x && user.y == tile.y && user.hearts > 0}
               <img src="character.png" width="37" height="37" style="border-bottom: 3px solid #{padHex(user.id.toString(16))}"/>

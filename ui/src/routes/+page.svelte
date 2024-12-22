@@ -82,6 +82,7 @@
         if (data.round) {
           round = data.round;
         }
+        ctx.monsters = data.monsters;
       }
       return false;
     };
