@@ -98,3 +98,24 @@ guys have different stats, money, power, romanticness, kindness, which can be re
 each princess has a relationship valence mechanic with all the guys
 
 Balls provide opportunities to meet people, and to gossip about others (potentially hurt their relationships)
+
+
+### how to deploy
+
+vim /etc/nginx/sites-available/treasure
+
+```
+server {
+    server_name treasure.zapatas.xyz ;
+
+    location / {
+        proxy_pass http://127.0.0.1:3334;
+        # WebSocket support
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+    server_name treasure.zapatas.xyz ;
+
+}
+```

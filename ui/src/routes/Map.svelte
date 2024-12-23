@@ -3,13 +3,14 @@
     width: 1760px;
     margin-left: auto;
     margin-right: auto;
+    touch-action: manipulation;
   }
   .row {
     display: flex;
   }
   .tile {
-    height: 40px;
-    width: 40px;
+    height: 44px;
+    width: 44px;
     background-color: black;
     overflow: hidden;
   }
@@ -38,20 +39,20 @@
     <div class="tile {tile.hidden ? '' : tile.kind}">
       {#if !tile.hidden}
         {#if (Date.now() - tile.exploded_at) < 2000 }
-          <img src="https://pluspng.com/img-png/explosion-png-hd--600.png" width="32" height="32"/>
+          <img src="explosion.png" width="36" height="36"/>
         {:else if tile.gold > 0 && !tile.chest}
-          <img src="https://www.onlygfx.com/wp-content/uploads/2020/11/stack-of-gold-coins-1-624x558.png" width="32" height="32"/>
+          <img src="gold-coins.png" width="36" height="36"/>
         {:else if tile.chest}
-          <img src="https://png.pngtree.com/png-clipart/20230103/original/pngtree-old-rusty-closed-treasure-chest-side-view-transparent-png-image_8864712.png" width="32" height="32"/>
+          <img src="treasure-chest.png" width="36" height="36"/>
         {:else}
           {#each ctx.monsters as monster}
             {#if monster.x == tile.x && monster.y == tile.y}
-              <img src="{monster.kind}.png" width="37" height="37"/>
+              <img src="{monster.kind}.png" width="40" height="40"/>
             {/if}
           {/each}
           {#each ctx.users as user}
             {#if !user.exited && user.x == tile.x && user.y == tile.y && user.hearts > 0}
-              <img src="character.png" width="37" height="37" style="border-bottom: 3px solid #{padHex(user.id.toString(16))}"/>
+              <img src="character{user.id}.png" width="40" height="40" style="border-bottom: 3px solid #{padHex(user.id.toString(16))}"/>
             {/if}
           {/each}
         {/if}

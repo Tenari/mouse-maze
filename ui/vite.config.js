@@ -14,7 +14,11 @@ export default defineConfig({
       '/Indiana-Jones-PNG-HD-Image.png': path,
       '/heart.png': path,
       '/snake.png': path,
-      '/character.png': path,
+      '/character0.png': path,
+      '/character1.png': path,
+      '/explosion.png': path,
+      '/gold-coins.png': path,
+      '/treasure-chest.png': path,
     }
   }
 });

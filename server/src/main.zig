@@ -3,6 +3,7 @@ const zap = @import("zap");
 const User = @import("user.zig");
 const State = @import("state.zig");
 const Ws = @import("ws.zig");
+const MOVES_PER_USER = @import("constants.zig").MOVES_PER_USER;
 
 const PORT = 3334;
 const FPS: i128 = 1;
@@ -352,8 +353,11 @@ fn gameLoop() void {
 
         state.main_lock.lock();
 
-        // if every user has moved 10 spaces (on average), then we spawn the ai
-        if (state.user_moves > 0 and state.user_moves / state.users.items.len >= 10) {
+        // if every user has moved MOVES_PER_USER spaces (on average), then we spawn the ai
+        if (
+            state.user_moves > 0
+            and (state.user_moves / state.activeUserCount()) >= MOVES_PER_USER
+        ) {
             state.user_moves = 0;// clear the move-count
             state.spawnMonster(random);
         }

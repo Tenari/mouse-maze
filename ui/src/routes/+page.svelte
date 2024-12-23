@@ -16,6 +16,9 @@
     font-size: 50px;
     width: 49%;
   }
+  .notouch {
+    touch-action: manipulation;
+  }
 </style>
 
 <script>
@@ -152,13 +155,14 @@
     {#if ctx.userId === null || !user}
       <Login />
     {:else}
+      <div class="notouch">
       <p style="border-bottom: 5px solid #{padHex(ctx.userId.toString(16))}">Playing as <b>{user.name}</b></p>
       <p>
         <img src="https://www.onlygfx.com/wp-content/uploads/2020/11/stack-of-gold-coins-1-624x558.png" width="64" height="64"/>
         <b>{user.gold}</b> /
         <b>{user.banked}</b>
       </p>
-      <p>Hearts: 
+      <p><img src="character{user.id}.png" width="32" height="32" /> Hearts: 
         {#if user.hearts == 3}
           <img src="heart.png" width="32" height="32"/>
         {/if}
@@ -193,6 +197,7 @@
       {#if moveError}
         <p style="color: red">{moveError}</p>
       {/if}
+      </div>
     {/if}
   {/if}
 {/if}

@@ -6,7 +6,7 @@ const Monster = @import("monster.zig");
 const consts = @import("constants.zig");
 const MAP_HEIGHT = consts.MAP_HEIGHT;
 const MAP_LENGTH = consts.MAP_LENGTH;
-const MAX_MONSTERS = consts.MAX_MONSTERS;
+const MAX_MONSTERS_PER_USER = consts.MAX_MONSTERS_PER_USER;
 const WALLS_TO_CLEAR = consts.WALLS_TO_CLEAR;
 
 const Self = @This();
@@ -242,7 +242,7 @@ fn fillDeadEnds(
 }
 
 pub fn spawnMonster(self: *Self, random: std.Random) void {
-    if (self.monsters.items.len > MAX_MONSTERS) {
+    if (self.monsters.items.len > MAX_MONSTERS_PER_USER) {
         return;
     }
     var tiles = [_]?*Tile {null} ** (MAP_HEIGHT*MAP_LENGTH);
@@ -314,6 +314,9 @@ fn nextIsTarget(list: []AStarPoint, x: usize, y: usize) bool {
 }
 // pathfinds from (x,y) to (tx,ty), and returns the next direction to move
 fn aStar(self: *Self, x: usize, y: usize, tx: usize, ty: usize) Direction {
+    if (x == tx and y == ty) {
+        return .north;
+    }
     std.debug.print("aStar({d}, {d}, {d}, {d})\n", .{x, y, tx, ty});
     var paths = std.ArrayList(AStarPoint).initCapacity(self.alloc, MAP_HEIGHT * MAP_LENGTH * 4) catch return .north;
     defer paths.deinit();
@@ -377,7 +380,7 @@ pub fn moveMonsters(self: *Self) void {
     for (self.monsters.items, 0..) |*monster, i| {
         std.debug.print("moving Monster #{d}: ", .{i});
         const user = self.users.items[monster.target];
-        if (user.exited) {
+        if (user.exited or user.hearts == 0) {
             if (monster.target == self.users.items.len - 1) {
                 monster.target = 0;
             } else {
@@ -610,6 +613,16 @@ pub fn move(self: *Self, user: *User, direction: [1]u8) !void {
             .stone => {},// don't need to do anything else... they cant move
         }
     }
+}
+
+pub fn activeUserCount(self: *Self) usize {
+    var count: usize = 0;
+    for (self.users.items) |user| {
+        if (!user.exited and user.hearts > 0) {
+            count += 1;
+        }
+    }
+    return count;
 }
 
 fn isGameFinished(self: *Self) bool {
